@@ -114,8 +114,8 @@ def get_trending_titles(api_key):
         return []
     try:
         # Pobieramy top 5 filmów i top 5 seriali (trendy z tego tygodnia)
-        movies = requests.get(f"https://api.themoviedb.org/3/trending/movie/week?api_key={api_key}&language=pl-PL").json().get('results', [])[:5]
-        tv = requests.get(f"https://api.themoviedb.org/3/trending/tv/week?api_key={api_key}&language=pl-PL").json().get('results', [])[:5]
+        movies = requests.get(f"https://api.themoviedb.org/3/trending/movie/week?api_key={api_key}&language=pl-PL").json().get('results', [])[:10]
+        tv = requests.get(f"https://api.themoviedb.org/3/trending/tv/week?api_key={api_key}&language=pl-PL").json().get('results', [])[:10]
         
         # Łączymy wyniki i przygotowujemy linki do plakatów
         trending = []
