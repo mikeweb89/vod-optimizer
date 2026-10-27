@@ -1,0 +1,19 @@
+# Moja lokalna baza danych z zapisami
+vod_data.json
+#Pliki systemowe Mac/Windows
+
+.DS_Store
+Thumbs.db
+
+#Pliki konfiguracyjne Cursora / VS Code
+
+.vscode/
+.cursor/
+
+#Pamięć podręczna Pythona
+
+__pycache/
+
+#NOWE: Ignorujemy ukryty folder Streamlit z naszymi sekretami!
+
+.streamlit/
