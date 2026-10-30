@@ -415,14 +415,52 @@ with tab_calc:
             
         st.write("---")
         st.subheader("Kupka wstydu na kolejny miesiąc ⏳")
+        
+        # Inicjalizacja pamięci dla poczekalni, by nie odpytywać API TMDB przy każdym kliknięciu
+        if 'wait_avail' not in st.session_state:
+            st.session_state['wait_avail'] = {}
+
         if st.session_state['waiting_room']:
+            # Pobieranie danych dla nowych tytułów w tle
+            missing = [item for item in st.session_state['waiting_room'] if item not in st.session_state['wait_avail']]
+            if missing:
+                with st.spinner("Analizuję zasoby Twojej kupki wstydu..."):
+                    for item in missing:
+                        avail, _, _ = fetch_availability_tmdb(item)
+                        st.session_state['wait_avail'][item] = avail
+            
+            # Zliczanie wystąpień na platformach
+            platform_counts = {p: 0 for p in PLATFORMS.keys()}
+            for item in st.session_state['waiting_room']:
+                for p in st.session_state['wait_avail'].get(item, []):
+                    if p in platform_counts:
+                        platform_counts[p] += 1
+            
+            # Wyświetlanie liczników (tylko dla platform, które mają > 0 filmów)
+            active_counts = {p: c for p, c in platform_counts.items() if c > 0}
+            if active_counts:
+                counts_str = " | ".join([f"{p}: {c}" for p, c in active_counts.items()])
+                st.caption(f"**Podsumowanie zaległości:** {counts_str}")
+                
+            # Logika rekomendacji - jeśli >= 3 zaległości
+            recommended = [p for p, c in active_counts.items() if c >= 3]
+            if recommended:
+                st.info(f"💡 **Wskazówka na przyszłość:** W kolejnym miesiącu z pewnością warto rozważyć wykupienie: **{', '.join(recommended)}**. Masz tam sporo do nadrobienia!")
+                
+            st.write("---")
+
+            # Wyświetlanie listy z tagami platform
             sorted_waiting_room = sorted(list(st.session_state['waiting_room']))
             for i, item in enumerate(sorted_waiting_room):
                 col_text, col_btn = st.columns([4, 1])
                 with col_text:
                     safe_title = urllib.parse.quote(item)
                     link = f"https://www.themoviedb.org/search?query={safe_title}&language=pl-PL"
-                    st.markdown(f"- **[{item.title()}]({link})**")
+                    
+                    platforms = st.session_state['wait_avail'].get(item, [])
+                    plat_str = f" `({', '.join(platforms)})`" if platforms else ""
+                    
+                    st.markdown(f"- **[{item.title()}]({link})**{plat_str}")
                 with col_btn:
                     if st.button("❌", key=f"del_wait_{i}_{item}"):
                         st.session_state['waiting_room'].remove(item)
