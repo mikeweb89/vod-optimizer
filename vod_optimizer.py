@@ -39,10 +39,7 @@ def load_data(email):
                 "target_budget": data.get("target_budget"),
                 "current_spend": data.get("current_spend")
             }
-        else:
-            new_user = {"user_email": email, "poczekalnia": [], "historia_wydatkow": []}
-            supabase.table("user_data").insert(new_user).execute()
-            return {"poczekalnia": [], "historia_wydatkow": [], "target_budget": None, "current_spend": None}
+        return {"poczekalnia": [], "historia_wydatkow": [], "target_budget": None, "current_spend": None}
     except Exception as e:
         st.error(f"Błąd połączenia z bazą danych: {e}")
         return {"poczekalnia": [], "historia_wydatkow": [], "target_budget": None, "current_spend": None}
@@ -146,19 +143,46 @@ def optimize_subscriptions(titles_availability):
             best_combo = list(combo)
     return best_combo
 
-# --- SYSTEM LOGOWANIA ---
+# --- SYSTEM LOGOWANIA Z HASŁEM ---
 st.sidebar.title("🔐 Twoje Konto")
 if not st.session_state['logged_in_user']:
+    st.sidebar.info("Wpisz adres e-mail i hasło. Jeśli konto nie istnieje, zostanie automatycznie utworzone!")
     user_email = st.sidebar.text_input("Adres e-mail", placeholder="przyklad@email.com")
-    if not user_email:
-        st.info("👈 Wpisz swój adres e-mail w panelu bocznym, aby rozpocząć korzystanie z aplikacji!")
-        st.stop()
-    elif "@" not in user_email or "." not in user_email:
-        st.sidebar.error("Wprowadź poprawny format e-mail.")
-        st.stop()
-    else:
-        st.session_state['logged_in_user'] = user_email.lower().strip()
-        st.rerun()
+    user_password = st.sidebar.text_input("Hasło", type="password")
+    
+    if st.sidebar.button("Zaloguj / Zarejestruj 🚀"):
+        if not user_email or not user_password:
+            st.sidebar.error("Podaj e-mail oraz hasło.")
+        elif "@" not in user_email or "." not in user_email:
+            st.sidebar.error("Wprowadź poprawny format e-mail.")
+        else:
+            clean_email = user_email.lower().strip()
+            with st.spinner("Weryfikacja..."):
+                try:
+                    response = supabase.table("user_data").select("password").eq("user_email", clean_email).execute()
+                    if len(response.data) > 0:
+                        # Użytkownik istnieje, sprawdzamy hasło
+                        stored_pass = response.data[0].get("password")
+                        if stored_pass == user_password:
+                            st.session_state['logged_in_user'] = clean_email
+                            st.rerun()
+                        else:
+                            st.sidebar.error("❌ Błędne hasło lub e-mail jest już zajęty!")
+                    else:
+                        # Nowy użytkownik, tworzymy konto
+                        new_user = {
+                            "user_email": clean_email, 
+                            "password": user_password,
+                            "poczekalnia": [], 
+                            "historia_wydatkow": []
+                        }
+                        supabase.table("user_data").insert(new_user).execute()
+                        st.session_state['logged_in_user'] = clean_email
+                        st.sidebar.success("Utworzono nowe konto!")
+                        st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"Błąd połączenia z bazą: {e}")
+    st.stop()
 
 st.sidebar.success(f"Zalogowano:\n**{st.session_state['logged_in_user']}**")
 if st.sidebar.button("Wyloguj 🚪"):
@@ -315,7 +339,6 @@ with tab_calc:
                     merged_combo = list(existing_combo.union(set(selected_platforms)))
                     new_cost = sum(st.session_state['platform_prices'][p]["price"] for p in merged_combo)
                     
-                    # Liczymy realne oszczędności (Stare nawyki - obecny zoptymalizowany koszt)
                     new_savings = st.session_state['current_spend'] - new_cost
                     merged_covered = list(set(st.session_state['history'][-1]['covered'] + covered))
                     
