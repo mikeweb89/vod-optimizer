@@ -143,6 +143,26 @@ def optimize_subscriptions(titles_availability):
             best_combo = list(combo)
     return best_combo
 
+# Funkcja zapisująca stan pojedynczego checkboxa do bazy na żywo
+def toggle_watched_status(title):
+    has_active = len(st.session_state['history']) > 0 and not st.session_state['history'][-1].get('is_closed', True)
+    if has_active:
+        if 'watched_temp' not in st.session_state['history'][-1]:
+            st.session_state['history'][-1]['watched_temp'] = []
+            
+        is_checked = st.session_state.get(f"chk_{title}", False)
+        if is_checked and title not in st.session_state['history'][-1]['watched_temp']:
+            st.session_state['history'][-1]['watched_temp'].append(title)
+        elif not is_checked and title in st.session_state['history'][-1]['watched_temp']:
+            st.session_state['history'][-1]['watched_temp'].remove(title)
+            
+        save_data(st.session_state['logged_in_user'], {
+            "poczekalnia": st.session_state['waiting_room'],
+            "historia_wydatkow": st.session_state['history'],
+            "target_budget": st.session_state['target_budget'],
+            "current_spend": st.session_state['current_spend']
+        })
+
 # --- SYSTEM LOGOWANIA Z HASŁEM ---
 st.sidebar.title("🔐 Twoje Konto")
 if not st.session_state['logged_in_user']:
@@ -207,7 +227,6 @@ if st.session_state['target_budget'] is None:
     st.subheader("1. Za które platformy płacisz w tym momencie?")
     current_subs = st.multiselect("Wybierz swoje aktywne subskrypcje:", list(PLATFORMS.keys()))
     
-    # Synchronizacja wyboru z cenami
     netflix_price = 75.0
     if "Netflix" in current_subs:
         netflix_plan = st.radio(
@@ -248,7 +267,6 @@ if st.session_state['target_budget'] is None:
         st.session_state['target_budget'] = user_budget
         st.session_state['current_spend'] = calculated_spend
         
-        # Zapisujemy wybrane ceny do bieżącej sesji, żeby kalkulator używał poprawnych
         st.session_state['platform_prices']["Netflix"]["price"] = netflix_price
         st.session_state['platform_prices']["Amazon Prime"]["price"] = prime_price
         
@@ -341,9 +359,12 @@ with tab_calc:
             
             if st.button("Zatwierdź plan i aktualizuj poczekalnię ✅", type="primary"):
                 covered, uncovered = [], []
+                covered_details = {}
                 for title in st.session_state['titles_to_check']:
-                    if any(p in selected_platforms for p in availability.get(title, [])):
+                    available_in_selected = [p for p in availability.get(title, []) if p in selected_platforms]
+                    if available_in_selected:
                         covered.append(title)
+                        covered_details[title] = available_in_selected
                     else:
                         uncovered.append(title)
                 
@@ -357,11 +378,15 @@ with tab_calc:
                     new_savings = st.session_state['current_spend'] - new_cost
                     merged_covered = list(set(st.session_state['history'][-1]['covered'] + covered))
                     
+                    merged_covered_details = st.session_state['history'][-1].get('covered_details', {})
+                    merged_covered_details.update(covered_details)
+                    
                     st.session_state['history'][-1].update({
                         "combo": merged_combo,
                         "cost": new_cost,
                         "savings": new_savings,
-                        "covered": merged_covered
+                        "covered": merged_covered,
+                        "covered_details": merged_covered_details
                     })
                 else:
                     cost = sum(st.session_state['platform_prices'][p]["price"] for p in selected_platforms)
@@ -372,6 +397,8 @@ with tab_calc:
                         "combo": selected_platforms,
                         "cost": cost,
                         "covered": covered,
+                        "covered_details": covered_details,
+                        "watched_temp": [],
                         "savings": savings,
                         "is_closed": False 
                     }
@@ -421,21 +448,41 @@ with tab_calc:
             st.markdown("**Do obejrzenia (Zaznacz to, co widziałeś):**")
             
             if res.get('covered'):
+                if 'watched_temp' not in res:
+                    res['watched_temp'] = []
+                    
                 if st.button("☑️ Zaznacz wszystkie jako obejrzane"):
                     for t in res['covered']:
                         st.session_state[f"chk_{t}"] = True
+                        if t not in res['watched_temp']:
+                            res['watched_temp'].append(t)
+                    save_data(st.session_state['logged_in_user'], {
+                        "poczekalnia": st.session_state['waiting_room'],
+                        "historia_wydatkow": st.session_state['history'],
+                        "target_budget": st.session_state['target_budget'],
+                        "current_spend": st.session_state['current_spend']
+                    })
+                    st.rerun()
                         
                 for t in res['covered']:
                     safe_title = urllib.parse.quote(t)
                     link = f"https://www.themoviedb.org/search?query={safe_title}&language=pl-PL"
-                    st.checkbox(f"[{t.title()}]({link})", key=f"chk_{t}")
+                    
+                    # Generowanie tagu platformy
+                    plats = res.get('covered_details', {}).get(t, [])
+                    plat_label = f" `[{', '.join(plats)}]`" if plats else ""
+                    
+                    # Inicjalizacja checkboxa ze stanu bazy
+                    chk_key = f"chk_{t}"
+                    if chk_key not in st.session_state:
+                        st.session_state[chk_key] = (t in res['watched_temp'])
+                        
+                    st.checkbox(f"[{t.title()}]({link}){plat_label}", key=chk_key, on_change=toggle_watched_status, args=(t,))
                 
                 st.write("")
                 if st.button("🏁 Zakończ ten plan rozliczeniowy", type="primary"):
-                    watched, unwatched = [], []
-                    for t in res['covered']:
-                        if st.session_state.get(f"chk_{t}", False): watched.append(t)
-                        else: unwatched.append(t)
+                    watched = res.get('watched_temp', [])
+                    unwatched = [t for t in res['covered'] if t not in watched]
                             
                     st.session_state['history'][-1]['covered'] = watched
                     st.session_state['history'][-1]['is_closed'] = True
