@@ -9,6 +9,38 @@ from supabase import create_client, Client
 # --- KONFIGURACJA STRONY ---
 st.set_page_config(page_title="Optymalizator Subskrypcji VOD", page_icon="🍿", layout="wide")
 
+# --- NOWOCZESNY DESIGN (CSS) ---
+modern_ui = """
+<style>
+/* Ukrycie systemowego menu Streamlit (Deploy, kropki) i stopki */
+#MainMenu {visibility: hidden;}
+header {visibility: hidden;}
+footer {visibility: hidden;}
+
+/* Nowoczesne, zaokrąglone przyciski z animacją powiększenia */
+.stButton > button {
+    border-radius: 24px !important;
+    font-weight: 600 !important;
+    transition: all 0.3s ease !important;
+    border: none !important;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
+}
+.stButton > button:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 12px rgba(229, 9, 20, 0.3) !important;
+}
+
+/* Delikatne podświetlenie kart (kontenerów) po najechaniu */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    transition: all 0.3s ease;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+    border-color: #555 !important;
+}
+</style>
+"""
+st.markdown(modern_ui, unsafe_allow_html=True)
+
 # --- SYSTEM POWIADOMIEŃ TOAST ---
 if 'toast_msg' in st.session_state:
     msg, icon = st.session_state['toast_msg']

@@ -16,4 +16,4 @@ __pycache/
 
 #NOWE: Ignorujemy ukryty folder Streamlit z naszymi sekretami!
 
-.streamlit/
+.streamlit/secrets.toml

@@ -1,0 +1,15 @@
+[theme]
+# Wyłączamy automatyczne dostosowywanie do przeglądarki, wymuszamy ciemny kinowy motyw
+base = "dark"
+
+# Twój główny kolor (Zmieniłem na krwistą, "netflixową" czerwień)
+primaryColor = "#E50914"
+
+# Głęboka, kinowa czerń jako tło zamiast standardowego szarego
+backgroundColor = "#0B0C10"
+
+# Odrobinę jaśniejszy odcień dla kontenerów (żeby karty ładnie się odcinały)
+secondaryBackgroundColor = "#1F2833"
+
+# Nowoczesny, bezszeryfowy font dla całej aplikacji
+font = "sans serif"
