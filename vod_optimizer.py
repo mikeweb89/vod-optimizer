@@ -7,14 +7,14 @@ import urllib.parse
 from supabase import create_client, Client
 
 # --- KONFIGURACJA STRONY ---
-st.set_page_config(page_title="Optymalizator Subskrypcji VOD", page_icon="🍿", layout="wide")
+st.set_page_config(page_title="Optymalizator Subskrypcji VOD", page_icon="🍿", layout="wide", initial_sidebar_state="expanded")
 
 # --- NOWOCZESNY DESIGN (CSS) ---
 modern_ui = """
 <style>
-/* Ukrycie systemowego menu Streamlit (Deploy, kropki) i stopki */
+/* Ukrywamy śmieci, ale ZOSTAWIAMY górny pasek, żeby działało menu na telefonach */
 #MainMenu {visibility: hidden;}
-header {visibility: hidden;}
+div[data-testid="stAppDeployButton"] {display: none;}
 footer {visibility: hidden;}
 
 /* Nowoczesne, zaokrąglone przyciski z animacją powiększenia */
