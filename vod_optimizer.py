@@ -173,19 +173,35 @@ def fetch_availability_tmdb(title):
     if TMDB_API_KEY == "BŁĄD_KLUCZA": return [], None, None
     search_url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={title}&language=pl-PL"
     try:
-        response = requests.get(search_url).json()
-        if not response.get('results'): return [], None, None
-        first_result = response['results'][0]
-        media_type = first_result.get('media_type')
-        item_id = first_result.get('id')
-        poster_path = first_result.get('poster_path')
-        vote_avg = first_result.get('vote_average')
+        response = requests.get(search_url, timeout=5).json()
+        results = response.get('results')
+        if not results: return [], None, None
+        
+        # --- INTELIGENTNE DOPASOWANIE TYTUŁU ---
+        user_query = title.strip().lower()
+        best_match = results[0] # Domyślnie bierzemy pierwszy wynik (najpopularniejszy)
+        
+        for item in results:
+            # TMDB używa 'title' dla filmów i 'name' dla seriali
+            item_title = (item.get('title') or item.get('name') or "").lower()
+            item_original = (item.get('original_title') or item.get('original_name') or "").lower()
+            
+            # Jeśli trafimy w punkt, nadpisujemy best_match i przerywamy szukanie
+            if user_query == item_title or user_query == item_original:
+                best_match = item
+                break
+        # ---------------------------------------
+
+        media_type = best_match.get('media_type')
+        item_id = best_match.get('id')
+        poster_path = best_match.get('poster_path')
+        vote_avg = best_match.get('vote_average')
         rating = round(vote_avg, 1) if vote_avg else None
         poster_url = f"https://image.tmdb.org/t/p/w154{poster_path}" if poster_path else None
         
         if media_type not in ['movie', 'tv']: return [], poster_url, rating
         providers_url = f"https://api.themoviedb.org/3/{media_type}/{item_id}/watch/providers?api_key={TMDB_API_KEY}"
-        prov_response = requests.get(providers_url).json()
+        prov_response = requests.get(providers_url, timeout=5).json()
         pl_data = prov_response.get('results', {}).get('PL', {})
         flatrate_options = pl_data.get('flatrate', [])
         
