@@ -70,6 +70,19 @@ def get_current_month_name():
     now = datetime.now()
     return f"{months_pl[now.month - 1]} {now.year}"
 
+def get_watch_history(title, history):
+    title_lower = title.strip().lower()
+    for h in reversed(history):
+        if h.get('is_closed', True):
+            # Tworzymy słownik, który paruje małe litery z oryginalną pisownią
+            covered_lower = {t.strip().lower(): t for t in h.get('covered', [])}
+            if title_lower in covered_lower:
+                oryginalny_tytul = covered_lower[title_lower]
+                plats = h.get('covered_details', {}).get(oryginalny_tytul, h.get('combo', []))
+                plat_str = f" [{', '.join(plats)}]" if plats else ""
+                return f"{h.get('month', 'Nieznany')}{plat_str}"
+    return None
+
 # Inicjalizacja stanu aplikacji
 if 'platform_prices' not in st.session_state:
     st.session_state['platform_prices'] = copy.deepcopy(PLATFORMS)
@@ -143,7 +156,6 @@ def optimize_subscriptions(titles_availability):
             best_combo = list(combo)
     return best_combo
 
-# Funkcja zapisująca stan pojedynczego checkboxa do bazy na żywo
 def toggle_watched_status(title):
     has_active = len(st.session_state['history']) > 0 and not st.session_state['history'][-1].get('is_closed', True)
     if has_active:
@@ -298,10 +310,15 @@ with tab_calc:
             st.session_state['clear_flag'] = False
             
         titles_input = st.text_area("Wpisz filmy/seriale (każdy w nowej linii):", height=120, key="search_input")
+        include_waiting_room = st.checkbox("➕ Uwzględnij tytuły z mojej Kupki wstydu", value=True)
         
         if st.button("Sprawdź dostępność 🔍"):
             current_titles = [t.strip() for t in titles_input.split('\n') if t.strip()]
-            all_titles = list(set(current_titles + st.session_state['waiting_room']))
+            
+            if include_waiting_room:
+                all_titles = list(set(current_titles + st.session_state['waiting_room']))
+            else:
+                all_titles = list(set(current_titles))
             
             if not all_titles:
                 st.warning("Brak tytułów do sprawdzenia!")
@@ -326,12 +343,14 @@ with tab_calc:
         if st.session_state['current_availability']:
             st.write("---")
             st.subheader("Etap 2: Twój wybór na aktualny cykl")
+            
             availability = st.session_state['current_availability']
             posters = st.session_state.get('current_posters', {})
             ratings = st.session_state.get('current_ratings', {})
             
-            for title, platforms in availability.items():
-                c_img, c_info = st.columns([1, 4])
+            titles_list = list(availability.keys())
+            for title in titles_list:
+                c_img, c_info, c_action = st.columns([1, 4, 1])
                 with c_img:
                     poster_url = posters.get(title)
                     if poster_url: st.image(poster_url, use_container_width=True)
@@ -341,81 +360,105 @@ with tab_calc:
                     rating = ratings.get(title)
                     rating_str = f" ⭐ {rating}/10" if rating else ""
                     st.markdown(f"### {title.title()}{rating_str}")
+                    
+                    history_match = get_watch_history(title, st.session_state['history'])
+                    if history_match:
+                        st.info(f"💡 Oglądałeś to już w: **{history_match}**!")
+                        
+                    platforms = availability.get(title, [])
                     if platforms:
                         platforms_links = " ".join([f"[`{p}`]({PLATFORMS[p]['url']})" for p in platforms])
                         st.markdown(platforms_links)
                     else:
                         st.markdown("*Brak w abonamentach (tylko wypożyczalnie/zakup).*")
+                        
+                with c_action:
+                    if st.button("🗑️ Odrzuć", key=f"discard_{title}"):
+                        if title in st.session_state['titles_to_check']:
+                            st.session_state['titles_to_check'].remove(title)
+                        if title in st.session_state['current_availability']:
+                            del st.session_state['current_availability'][title]
+                        st.rerun()
+                        
             st.write("---")
 
-            suggested_combo = optimize_subscriptions(availability)
-            st.success(f"💡 **Sugestia algorytmu:** Najbardziej opłaca Ci się wziąć: **{', '.join(suggested_combo) if suggested_combo else 'Nic'}**")
-            
-            selected_platforms = st.multiselect(
-                "Wybierz platformy, które chcesz dodać do tego cyklu:", 
-                options=list(PLATFORMS.keys()), 
-                default=suggested_combo
-            )
-            
-            if st.button("Zatwierdź plan i aktualizuj poczekalnię ✅", type="primary"):
-                covered, uncovered = [], []
-                covered_details = {}
-                for title in st.session_state['titles_to_check']:
-                    available_in_selected = [p for p in availability.get(title, []) if p in selected_platforms]
-                    if available_in_selected:
-                        covered.append(title)
-                        covered_details[title] = available_in_selected
-                    else:
-                        uncovered.append(title)
+            if st.session_state['current_availability']:
+                suggested_combo = optimize_subscriptions(st.session_state['current_availability'])
+                st.success(f"💡 **Sugestia algorytmu:** Najbardziej opłaca Ci się wziąć: **{', '.join(suggested_combo) if suggested_combo else 'Nic'}**")
                 
-                has_active_plan = len(st.session_state['history']) > 0 and not st.session_state['history'][-1].get('is_closed', True)
+                selected_platforms = st.multiselect(
+                    "Wybierz platformy, które chcesz dodać do tego cyklu:", 
+                    options=list(PLATFORMS.keys()), 
+                    default=suggested_combo
+                )
                 
-                if has_active_plan:
-                    existing_combo = set(st.session_state['history'][-1]['combo'])
-                    merged_combo = list(existing_combo.union(set(selected_platforms)))
-                    new_cost = sum(st.session_state['platform_prices'][p]["price"] for p in merged_combo)
-                    
-                    new_savings = st.session_state['current_spend'] - new_cost
-                    merged_covered = list(set(st.session_state['history'][-1]['covered'] + covered))
-                    
-                    merged_covered_details = st.session_state['history'][-1].get('covered_details', {})
-                    merged_covered_details.update(covered_details)
-                    
-                    st.session_state['history'][-1].update({
-                        "combo": merged_combo,
-                        "cost": new_cost,
-                        "savings": new_savings,
-                        "covered": merged_covered,
-                        "covered_details": merged_covered_details
-                    })
+                live_cost = sum(st.session_state['platform_prices'][p]["price"] for p in selected_platforms)
+                live_left = st.session_state['target_budget'] - live_cost
+                
+                if live_cost > st.session_state['target_budget']:
+                    st.error(f"💸 Koszt wybranych: **{live_cost:.2f} PLN** (Przekraczasz budżet o {abs(live_left):.2f} PLN!)")
                 else:
-                    cost = sum(st.session_state['platform_prices'][p]["price"] for p in selected_platforms)
-                    savings = st.session_state['current_spend'] - cost
+                    st.info(f"💸 Koszt wybranych: **{live_cost:.2f} PLN** (Zostaje Ci: {live_left:.2f} PLN z budżetu)")
+                
+                if st.button("Zatwierdź plan i aktualizuj poczekalnię ✅", type="primary"):
+                    covered, uncovered = [], []
+                    covered_details = {}
+                    for title in st.session_state['titles_to_check']:
+                        available_in_selected = [p for p in st.session_state['current_availability'].get(title, []) if p in selected_platforms]
+                        if available_in_selected:
+                            covered.append(title)
+                            covered_details[title] = available_in_selected
+                        else:
+                            uncovered.append(title)
                     
-                    current_month_result = {
-                        "month": get_current_month_name(),
-                        "combo": selected_platforms,
-                        "cost": cost,
-                        "covered": covered,
-                        "covered_details": covered_details,
-                        "watched_temp": [],
-                        "savings": savings,
-                        "is_closed": False 
-                    }
-                    st.session_state['history'].append(current_month_result)
-                
-                st.session_state['waiting_room'] = uncovered
-                st.session_state['current_availability'] = None
-                st.session_state['titles_to_check'] = []
-                
-                save_data(st.session_state['logged_in_user'], {
-                    "poczekalnia": st.session_state['waiting_room'],
-                    "historia_wydatkow": st.session_state['history'],
-                    "target_budget": st.session_state['target_budget'],
-                    "current_spend": st.session_state['current_spend']
-                })
-                st.session_state['toast_msg'] = ("Zaktualizowano plan na ten cykl!", "✅")
-                st.rerun()
+                    has_active_plan = len(st.session_state['history']) > 0 and not st.session_state['history'][-1].get('is_closed', True)
+                    
+                    if has_active_plan:
+                        existing_combo = set(st.session_state['history'][-1]['combo'])
+                        merged_combo = list(existing_combo.union(set(selected_platforms)))
+                        new_cost = sum(st.session_state['platform_prices'][p]["price"] for p in merged_combo)
+                        
+                        new_savings = st.session_state['current_spend'] - new_cost
+                        merged_covered = list(set(st.session_state['history'][-1]['covered'] + covered))
+                        
+                        merged_covered_details = st.session_state['history'][-1].get('covered_details', {})
+                        merged_covered_details.update(covered_details)
+                        
+                        st.session_state['history'][-1].update({
+                            "combo": merged_combo,
+                            "cost": new_cost,
+                            "savings": new_savings,
+                            "covered": merged_covered,
+                            "covered_details": merged_covered_details
+                        })
+                    else:
+                        cost = sum(st.session_state['platform_prices'][p]["price"] for p in selected_platforms)
+                        savings = st.session_state['current_spend'] - cost
+                        
+                        current_month_result = {
+                            "month": get_current_month_name(),
+                            "combo": selected_platforms,
+                            "cost": cost,
+                            "covered": covered,
+                            "covered_details": covered_details,
+                            "watched_temp": [],
+                            "savings": savings,
+                            "is_closed": False 
+                        }
+                        st.session_state['history'].append(current_month_result)
+                    
+                    st.session_state['waiting_room'] = uncovered
+                    st.session_state['current_availability'] = None
+                    st.session_state['titles_to_check'] = []
+                    
+                    save_data(st.session_state['logged_in_user'], {
+                        "poczekalnia": st.session_state['waiting_room'],
+                        "historia_wydatkow": st.session_state['history'],
+                        "target_budget": st.session_state['target_budget'],
+                        "current_spend": st.session_state['current_spend']
+                    })
+                    st.session_state['toast_msg'] = ("Zaktualizowano plan na ten cykl!", "✅")
+                    st.rerun()
 
     with col2:
         st.subheader("Dashboard Finansowy 💰")
@@ -468,11 +511,9 @@ with tab_calc:
                     safe_title = urllib.parse.quote(t)
                     link = f"https://www.themoviedb.org/search?query={safe_title}&language=pl-PL"
                     
-                    # Generowanie tagu platformy
                     plats = res.get('covered_details', {}).get(t, [])
                     plat_label = f" `[{', '.join(plats)}]`" if plats else ""
                     
-                    # Inicjalizacja checkboxa ze stanu bazy
                     chk_key = f"chk_{t}"
                     if chk_key not in st.session_state:
                         st.session_state[chk_key] = (t in res['watched_temp'])
