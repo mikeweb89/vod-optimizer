@@ -3,7 +3,6 @@ import requests
 import copy
 import itertools
 from datetime import datetime
-import random
 import urllib.parse
 from supabase import create_client, Client
 
@@ -62,7 +61,8 @@ PLATFORMS = {
     "Apple TV+": {"price": 34.99, "jw_id": 350, "url": "https://tv.apple.com/pl"},
     "Max": {"price": 29.99, "jw_id": 1899, "url": "https://www.max.com/pl/pl"}, 
     "Canal+": {"price": 29.00, "jw_id": 582, "url": "https://canalplus.com/pl/"},
-    "SkyShowtime": {"price": 24.99, "jw_id": 1773, "url": "https://www.skyshowtime.com/pl"}
+    "SkyShowtime": {"price": 24.99, "jw_id": 1773, "url": "https://www.skyshowtime.com/pl"},
+    "Amazon Prime": {"price": 10.99, "jw_id": 119, "url": "https://www.primevideo.com/pl/"}
 }
 
 def get_current_month_name():
@@ -161,7 +161,6 @@ if not st.session_state['logged_in_user']:
                 try:
                     response = supabase.table("user_data").select("password").eq("user_email", clean_email).execute()
                     if len(response.data) > 0:
-                        # Użytkownik istnieje, sprawdzamy hasło
                         stored_pass = response.data[0].get("password")
                         if stored_pass == user_password:
                             st.session_state['logged_in_user'] = clean_email
@@ -169,7 +168,6 @@ if not st.session_state['logged_in_user']:
                         else:
                             st.sidebar.error("❌ Błędne hasło lub e-mail jest już zajęty!")
                     else:
-                        # Nowy użytkownik, tworzymy konto
                         new_user = {
                             "user_email": clean_email, 
                             "password": user_password,
@@ -209,7 +207,8 @@ if st.session_state['target_budget'] is None:
     st.subheader("1. Za które platformy płacisz w tym momencie?")
     current_subs = st.multiselect("Wybierz swoje aktywne subskrypcje:", list(PLATFORMS.keys()))
     
-    netflix_price = 0
+    # Synchronizacja wyboru z cenami
+    netflix_price = 75.0
     if "Netflix" in current_subs:
         netflix_plan = st.radio(
             "Z jakiego planu Netflixa korzystasz?", 
@@ -221,10 +220,22 @@ if st.session_state['target_budget'] is None:
         elif "55" in netflix_plan: netflix_price = 55.0
         else: netflix_price = 75.0
 
+    prime_price = 10.99
+    if "Amazon Prime" in current_subs:
+        prime_plan = st.radio(
+            "Jak płacisz za Amazon Prime?", 
+            ["Miesięcznie (10,99 zł)", 
+             "Rocznie z góry (49 zł / rok -> ok. 4,08 zł miesięcznie)"]
+        )
+        if "Rocznie" in prime_plan: prime_price = 4.08
+        else: prime_price = 10.99
+
     calculated_spend = 0.0
     for sub in current_subs:
         if sub == "Netflix":
             calculated_spend += netflix_price
+        elif sub == "Amazon Prime":
+            calculated_spend += prime_price
         else:
             calculated_spend += PLATFORMS[sub]["price"]
             
@@ -236,6 +247,10 @@ if st.session_state['target_budget'] is None:
     if st.button("Zapisz profil i przejdź do aplikacji 🚀", type="primary"):
         st.session_state['target_budget'] = user_budget
         st.session_state['current_spend'] = calculated_spend
+        
+        # Zapisujemy wybrane ceny do bieżącej sesji, żeby kalkulator używał poprawnych
+        st.session_state['platform_prices']["Netflix"]["price"] = netflix_price
+        st.session_state['platform_prices']["Amazon Prime"]["price"] = prime_price
         
         save_data(st.session_state['logged_in_user'], {
             "poczekalnia": st.session_state['waiting_room'],
@@ -527,7 +542,7 @@ with tab_settings:
     
     c_set1, c_set2 = st.columns(2)
     platforms_list = list(st.session_state['platform_prices'].items())
-    half = len(platforms_list) // 2
+    half = (len(platforms_list) + 1) // 2
     
     with c_set1:
         for p_name, p_data in platforms_list[:half]:
