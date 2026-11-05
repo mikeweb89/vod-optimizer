@@ -5,6 +5,65 @@ import itertools
 from datetime import datetime
 import urllib.parse
 from supabase import create_client, Client
+import pandas as pd
+
+@st.dialog("⚠️ Usuwanie danych")
+def confirm_hard_reset():
+    st.write("Czy na pewno chcesz usunąć CAŁĄ historię, budżet i poczekalnię? Ta akcja jest nieodwracalna.")
+    if st.button("Tak, usuń wszystko trwale", type="primary", use_container_width=True):
+        st.session_state['history'] = []
+        st.session_state['waiting_room'] = []
+        st.session_state['target_budget'] = None
+        st.session_state['current_spend'] = None
+        save_data(st.session_state['logged_in_user'], {
+            "poczekalnia": [],
+            "historia_wydatkow": [],
+            "target_budget": None,
+            "current_spend": None
+        })
+        st.session_state['toast_msg'] = ("Konto zostało zresetowane", "🧹")
+        st.rerun()
+
+@st.dialog("🏁 Weryfikacja cyklu")
+def confirm_cycle_closure(watched_titles, unwatched_titles):
+    st.write("Zanim zamkniemy cykl, powiedz szczerze:")
+    st.subheader("Czy w tym miesiącu faktycznie opłaciłeś te platformy?")
+    
+    if st.button("✅ Tak, kupiłem (Zapisz cykl i oszczędności)", type="primary", use_container_width=True):
+        st.session_state['history'][-1]['covered'] = watched_titles
+        st.session_state['history'][-1]['is_closed'] = True
+        
+        if unwatched_titles:
+            st.session_state['waiting_room'].extend(unwatched_titles)
+            st.session_state['waiting_room'] = list(set(st.session_state['waiting_room']))
+            
+        save_data(st.session_state['logged_in_user'], {
+            "poczekalnia": st.session_state['waiting_room'],
+            "historia_wydatkow": st.session_state['history'],
+            "target_budget": st.session_state['target_budget'],
+            "current_spend": st.session_state['current_spend']
+        })
+        st.session_state['toast_msg'] = ("Cykl zamknięty, oszczędności dodane!", "💰")
+        st.rerun()
+        
+    if st.button("❌ Nie, zrezygnowałem (Anuluj ten plan)", type="secondary", use_container_width=True):
+        # Usuwamy aktywny, niezamknięty plan z historii i zliczania oszczędności
+        st.session_state['history'].pop()
+        
+        # Zwracamy wszystkie zaplanowane tytuły do poczekalni
+        all_planned = watched_titles + unwatched_titles
+        if all_planned:
+            st.session_state['waiting_room'].extend(all_planned)
+            st.session_state['waiting_room'] = list(set(st.session_state['waiting_room']))
+            
+        save_data(st.session_state['logged_in_user'], {
+            "poczekalnia": st.session_state['waiting_room'],
+            "historia_wydatkow": st.session_state['history'],
+            "target_budget": st.session_state['target_budget'],
+            "current_spend": st.session_state['current_spend']
+        })
+        st.session_state['toast_msg'] = ("Plan anulowany. Tytuły wracają do poczekalni, brak kosztów.", "↩️")
+        st.rerun()
 
 # --- KONFIGURACJA STRONY ---
 st.set_page_config(page_title="Optymalizator Subskrypcji VOD", page_icon="🍿", layout="wide", initial_sidebar_state="expanded")
@@ -68,12 +127,13 @@ def load_data(email):
                 "poczekalnia": data.get("poczekalnia", []), 
                 "historia_wydatkow": data.get("historia_wydatkow", []),
                 "target_budget": data.get("target_budget"),
-                "current_spend": data.get("current_spend")
+                "current_spend": data.get("current_spend"),
+                "platform_prices": data.get("platform_prices") # <--- NOWE
             }
-        return {"poczekalnia": [], "historia_wydatkow": [], "target_budget": None, "current_spend": None}
+        return {"poczekalnia": [], "historia_wydatkow": [], "target_budget": None, "current_spend": None, "platform_prices": None}
     except Exception as e:
         st.error(f"Błąd połączenia z bazą danych: {e}")
-        return {"poczekalnia": [], "historia_wydatkow": [], "target_budget": None, "current_spend": None}
+        return {"poczekalnia": [], "historia_wydatkow": [], "target_budget": None, "current_spend": None, "platform_prices": None}
 
 def save_data(email, data):
     try:
@@ -81,7 +141,9 @@ def save_data(email, data):
             "poczekalnia": data.get("poczekalnia", []),
             "historia_wydatkow": data.get("historia_wydatkow", []),
             "target_budget": data.get("target_budget"),
-            "current_spend": data.get("current_spend")
+            "current_spend": data.get("current_spend"),
+            # Zaciągamy ceny wprost z sesji, żeby nie zmieniać każdego przycisku w kodzie
+            "platform_prices": st.session_state.get('platform_prices', PLATFORMS)
         }).eq("user_email", email).execute()
     except Exception as e:
         st.error(f"Błąd zapisu do bazy danych: {e}")
@@ -96,6 +158,34 @@ PLATFORMS = {
     "SkyShowtime": {"price": 24.99, "jw_id": 1773, "url": "https://www.skyshowtime.com/pl"},
     "Amazon Prime": {"price": 10.99, "jw_id": 119, "url": "https://www.primevideo.com/pl/"}
 }
+
+# --- FUNKCJE POMOCNICZE UI ---
+def platform_chip(name):
+    # Kolory dopasowane do brandingu platform
+    colors = {
+        "Netflix": "#E50914",
+        "Disney+": "#113CCF",
+        "Max": "#5A2E98",
+        "Apple TV+": "#1C1C1E",
+        "Canal+": "#000000",
+        "SkyShowtime": "#001D66",
+        "Amazon Prime Video": "#00A8E1"
+    }
+    bg_color = colors.get(name, "#555555") # Szary jako domyślny dla nierozpoznanych
+    url = PLATFORMS.get(name, {}).get("url", "#")
+    
+    return f'<a href="{url}" target="_blank" style="text-decoration: none;"><span style="background-color: {bg_color}; color: white; padding: 2px 10px; border-radius: 12px; font-size: 0.75em; font-weight: 600; margin-right: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); display: inline-block; margin-bottom: 4px;">{name}</span></a>'
+
+def rating_badge(rating):
+    if not rating: return ""
+    try:
+        r = float(rating)
+        if r >= 7.5: bg = "#16a34a" # Zielony (hity)
+        elif r >= 6.0: bg = "#ca8a04" # Żółty (średniaki)
+        else: bg = "#4b5563" # Szary (słabe)
+        return f'<span style="background-color: {bg}; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.55em; vertical-align: middle; margin-left: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">⭐ {r:.1f}</span>'
+    except:
+        return ""
 
 def get_current_month_name():
     months_pl = ["Styczeń", "Luty", "Marzec", "Kwiecień", "Maj", "Czerwiec", "Lipiec", "Sierpień", "Wrzesień", "Październik", "Listopad", "Grudzień"]
@@ -115,11 +205,12 @@ def get_watch_history(title, history):
     return None
 
 # --- KARUZELA PLAKATÓW ---
+@st.cache_data(ttl=3600)
 def display_marquee():
     if TMDB_API_KEY == "BŁĄD_KLUCZA": return
     url = f"https://api.themoviedb.org/3/trending/all/week?api_key={TMDB_API_KEY}&language=pl-PL"
     try:
-        resp = requests.get(url).json()
+        resp = requests.get(url, timeout=5).json()
         results = resp.get('results', [])
         if not results: return
         
@@ -131,8 +222,12 @@ def display_marquee():
                 posters_html += f'<img src="{img_url}" style="height: 160px; margin-right: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">'
         
         marquee_html = f"""
-        <div style="overflow: hidden; white-space: nowrap; margin-bottom: 30px; padding: 10px 0;">
-            <div style="display: inline-block; animation: scroll 35s linear infinite;">
+        <div style="overflow: hidden; white-space: nowrap; margin-bottom: 30px; padding: 10px 0; 
+                    -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent); 
+                    mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);">
+            <div style="display: inline-block; animation: scroll 35s linear infinite;" 
+                 onmouseover="this.style.animationPlayState='paused'" 
+                 onmouseout="this.style.animationPlayState='running'">
                 {posters_html} {posters_html}
             </div>
         </div>
@@ -257,41 +352,53 @@ def toggle_watched_status(title):
 
 # --- SYSTEM LOGOWANIA Z HASŁEM ---
 if not st.session_state['logged_in_user']:
-    st.sidebar.title("🔐 Twoje Konto")
-    st.sidebar.info("Wpisz adres e-mail i hasło. Jeśli konto nie istnieje, zostanie automatycznie utworzone!")
-    user_email = st.sidebar.text_input("Adres e-mail", placeholder="przyklad@email.com")
-    user_password = st.sidebar.text_input("Hasło", type="password")
+    # Tworzymy 3 kolumny, żeby wyśrodkować środkową (2 razy szerszą)
+    _, col_login, _ = st.columns([1, 2, 1])
     
-    if st.sidebar.button("Zaloguj / Zarejestruj 🚀"):
-        if not user_email or not user_password:
-            st.sidebar.error("Podaj e-mail oraz hasło.")
-        elif "@" not in user_email or "." not in user_email:
-            st.sidebar.error("Wprowadź poprawny format e-mail.")
-        else:
-            clean_email = user_email.lower().strip()
-            with st.spinner("Weryfikacja..."):
-                try:
-                    response = supabase.table("user_data").select("password").eq("user_email", clean_email).execute()
-                    if len(response.data) > 0:
-                        stored_pass = response.data[0].get("password")
-                        if stored_pass == user_password:
-                            st.session_state['logged_in_user'] = clean_email
-                            st.rerun()
-                        else:
-                            st.sidebar.error("❌ Błędne hasło lub e-mail jest już zajęty!")
+    with col_login:
+        st.write("") # Drobny odstęp z góry
+        st.write("")
+        with st.container(border=True):
+            st.markdown("<h2 style='text-align: center;'>🎬 Optymalizator VOD</h2>", unsafe_allow_html=True)
+            st.markdown("<p style='text-align: center; color: gray;'>Zaloguj się lub zarejestruj, aby zarządzać subskrypcjami</p>", unsafe_allow_html=True)
+            st.write("")
+            
+            # st.form pozwala na zatwierdzanie klawiszem Enter
+            with st.form("login_form"):
+                user_email = st.text_input("Adres e-mail", placeholder="przyklad@email.com")
+                user_password = st.text_input("Hasło", type="password")
+                submitted = st.form_submit_button("Zaloguj / Zarejestruj 🚀", use_container_width=True)
+                
+                if submitted:
+                    if not user_email or not user_password:
+                        st.error("Podaj e-mail oraz hasło.")
+                    elif "@" not in user_email or "." not in user_email:
+                        st.error("Wprowadź poprawny format e-mail.")
                     else:
-                        new_user = {
-                            "user_email": clean_email, 
-                            "password": user_password,
-                            "poczekalnia": [], 
-                            "historia_wydatkow": []
-                        }
-                        supabase.table("user_data").insert(new_user).execute()
-                        st.session_state['logged_in_user'] = clean_email
-                        st.sidebar.success("Utworzono nowe konto!")
-                        st.rerun()
-                except Exception as e:
-                    st.sidebar.error(f"Błąd połączenia z bazą: {e}")
+                        clean_email = user_email.lower().strip()
+                        with st.spinner("Weryfikacja..."):
+                            try:
+                                response = supabase.table("user_data").select("password").eq("user_email", clean_email).execute()
+                                if len(response.data) > 0:
+                                    stored_pass = response.data[0].get("password")
+                                    if stored_pass == user_password:
+                                        st.session_state['logged_in_user'] = clean_email
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ Błędne hasło lub e-mail jest już zajęty!")
+                                else:
+                                    new_user = {
+                                        "user_email": clean_email, 
+                                        "password": user_password,
+                                        "poczekalnia": [], 
+                                        "historia_wydatkow": []
+                                    }
+                                    supabase.table("user_data").insert(new_user).execute()
+                                    st.session_state['logged_in_user'] = clean_email
+                                    st.success("Utworzono nowe konto!")
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"Błąd połączenia z bazą: {e}")
     st.stop()
 
 
@@ -303,6 +410,12 @@ if 'cloud_loaded' not in st.session_state or not st.session_state['cloud_loaded'
         st.session_state['history'] = cloud_data.get("historia_wydatkow", [])
         st.session_state['target_budget'] = cloud_data.get("target_budget")
         st.session_state['current_spend'] = cloud_data.get("current_spend")
+
+        # --- NOWE: Nadpisywanie cen domyślnych tymi z chmury ---
+        saved_prices = cloud_data.get("platform_prices")
+        if saved_prices:
+            st.session_state['platform_prices'] = saved_prices
+            
         st.session_state['cloud_loaded'] = True
 
 # ==========================================
@@ -392,7 +505,20 @@ with c_prof:
 display_marquee()
 
 st.title("🎬 Optymalizator Subskrypcji VOD")
-st.markdown(f"**Twój docelowy limit:** `{st.session_state['target_budget']:.2f} PLN` | **Stare nawyki:** `{st.session_state['current_spend']:.2f} PLN/mc`")
+
+# Szybkie zsumowanie oszczędności z całej historii do kafelka KPI
+total_saved = sum([h.get("savings", 0) for h in st.session_state['history']])
+
+kpi1, kpi2, kpi3 = st.columns(3)
+with kpi1:
+    st.metric("Docelowy limit", f"{st.session_state['target_budget']:.2f} zł")
+with kpi2:
+    st.metric("Dawne wydatki", f"{st.session_state['current_spend']:.2f} zł")
+with kpi3:
+    # Delta (zielona strzałka) pokaże się, jeśli oszczędności są większe od zera
+    st.metric("Łączne oszczędności", f"{total_saved:.2f} zł", delta=f"{total_saved:.2f} zł" if total_saved > 0 else None)
+
+st.write("---") # Oddzielenie headera od reszty apki linią
 
 tab_calc, tab_settings = st.tabs(["🍿 Kalkulator VOD", "⚙️ Ustawienia Profilu"])
 
@@ -451,13 +577,14 @@ with tab_calc:
                     c_img, c_info, c_action = st.columns([1, 4, 1])
                     with c_img:
                         poster_url = posters.get(title)
-                        if poster_url: st.image(poster_url, use_container_width=True)
-                        else: st.markdown("🎥 *Brak plakatu*")
+                        if poster_url:
+                            st.markdown(f'<img src="{poster_url}" style="width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">', unsafe_allow_html=True)
+                        else:
+                            st.markdown('<div style="width: 100%; aspect-ratio: 2/3; background-color: #1e1e1e; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 2em; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">🎬</div>', unsafe_allow_html=True)
                     
                     with c_info:
                         rating = ratings.get(title)
-                        rating_str = f" ⭐ {rating}/10" if rating else ""
-                        st.markdown(f"### {title.title()}{rating_str}")
+                        st.markdown(f"### {title.title()} {rating_badge(rating)}", unsafe_allow_html=True)
                         
                         history_match = get_watch_history(title, st.session_state['history'])
                         if history_match:
@@ -465,8 +592,8 @@ with tab_calc:
                             
                         platforms = availability.get(title, [])
                         if platforms:
-                            platforms_links = " ".join([f"[`{p}`]({PLATFORMS[p]['url']})" for p in platforms])
-                            st.markdown(platforms_links)
+                            platforms_links = "".join([platform_chip(p) for p in platforms])
+                            st.markdown(platforms_links, unsafe_allow_html=True)
                         else:
                             st.markdown("*Brak w abonamentach (tylko wypożyczalnie/zakup).*")
                             
@@ -559,11 +686,7 @@ with tab_calc:
 
     with col2:
         st.subheader("Dashboard Finansowy 💰")
-        
-        total_savings = sum(h.get("savings", 0) for h in st.session_state['history'])
-        if total_savings > 0:
-            st.success(f"🎉 **Zaoszczędziłeś łącznie od początku:** {total_savings:.2f} PLN (względem Twoich starych nawyków!)")
-        
+                        
         has_active_plan = len(st.session_state['history']) > 0 and not st.session_state['history'][-1].get('is_closed', True)
         
         if has_active_plan:
@@ -572,7 +695,8 @@ with tab_calc:
                 current_cost = res.get('cost', 0.0)
                 savings = st.session_state['current_spend'] - current_cost
                 
-                st.write(f"**W bieżącym cyklu ({res.get('month')}) kupiłeś:** {', '.join(res.get('combo', [])) if res.get('combo', []) else 'Nic!'}")
+                combo_html = "".join([platform_chip(p) for p in res.get('combo', [])]) if res.get('combo', []) else 'Nic!'
+                st.markdown(f"**W bieżącym cyklu ({res.get('month')}) kupiłeś:** {combo_html}", unsafe_allow_html=True)
                 
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Twój Limit", f"{st.session_state['target_budget']:.2f} PLN")
@@ -621,34 +745,12 @@ with tab_calc:
                     st.write("")
                     if st.button("🏁 Zakończ ten plan rozliczeniowy", type="primary", use_container_width=True):
                         watched = res.get('watched_temp', [])
-                        unwatched = [t for t in res['covered'] if t not in watched]
-                                
-                        st.session_state['history'][-1]['covered'] = watched
-                        st.session_state['history'][-1]['is_closed'] = True
-                        
-                        st.session_state['waiting_room'].extend(unwatched)
-                        st.session_state['waiting_room'] = list(set(st.session_state['waiting_room']))
-                        
-                        save_data(st.session_state['logged_in_user'], {
-                            "poczekalnia": st.session_state['waiting_room'],
-                            "historia_wydatkow": st.session_state['history'],
-                            "target_budget": st.session_state['target_budget'],
-                            "current_spend": st.session_state['current_spend']
-                        })
-                        st.session_state['toast_msg'] = ("Cykl zamknięty! Nieobejrzane tytuły wróciły do poczekalni.", "🔄")
-                        st.rerun()
+                        unwatched = [t for t in res.get('covered', []) if t not in watched]
+                        confirm_cycle_closure(watched, unwatched)
                 else:
                     st.write("*Brak tytułów do obejrzenia.*")
                     if st.button("🏁 Zakończ ten plan rozliczeniowy", type="primary", use_container_width=True):
-                        st.session_state['history'][-1]['is_closed'] = True
-                        save_data(st.session_state['logged_in_user'], {
-                            "poczekalnia": st.session_state['waiting_room'],
-                            "historia_wydatkow": st.session_state['history'],
-                            "target_budget": st.session_state['target_budget'],
-                            "current_spend": st.session_state['current_spend']
-                        })
-                        st.session_state['toast_msg'] = ("Cykl zamknięty!", "🔄")
-                        st.rerun()
+                        confirm_cycle_closure(watched, unwatched)
         else:
             st.info("Zatwierdź plan z lewej strony, aby rozpocząć nowy cykl rozliczeniowy.")
             
@@ -689,8 +791,8 @@ with tab_calc:
                         safe_title = urllib.parse.quote(item)
                         link = f"https://www.themoviedb.org/search?query={safe_title}&language=pl-PL"
                         platforms = st.session_state['wait_avail'].get(item, [])
-                        plat_str = f" `({', '.join(platforms)})`" if platforms else ""
-                        st.markdown(f"- **[{item.title()}]({link})**{plat_str}")
+                        plat_str = "".join([platform_chip(p) for p in platforms]) if platforms else ""
+                        st.markdown(f"- **[{item.title()}]({link})** {plat_str}", unsafe_allow_html=True)
                     with col_btn:
                         if st.button("❌", key=f"del_wait_{i}_{item}"):
                             st.session_state['waiting_room'].remove(item)
@@ -707,19 +809,69 @@ with tab_calc:
 
         if st.session_state['history']:
             st.write("---")
-            with st.expander("📜 Historia Twoich miesięcy (najnowsze na górze)"):
-                for h in reversed(st.session_state['history']):
-                    h_savings = h.get('savings', 0.0)
-                    status = "✅ Zamknięty" if h.get('is_closed', True) else "⏳ Otwarty"
-                    st.markdown(f"### {h.get('month', 'Nieznany')} ({status})")
-                    st.markdown(f"**Zakupiono:** {', '.join(h.get('combo', [])) if h.get('combo', []) else 'Nic'} *(Zaoszczędzono: {h_savings:.2f} PLN)*")
-                    if h.get('covered'):
-                        st.markdown("**Obejrzano:**")
-                        for t in h['covered']:
-                            safe_title = urllib.parse.quote(t)
-                            link = f"https://www.themoviedb.org/search?query={safe_title}&language=pl-PL"
-                            st.markdown(f"- [{t.title()}]({link})")
-                    st.write("---")
+            
+            # 1. Wykres ukryty domyślnie w ekspanderze
+            with st.expander("📊 Trend Twoich oszczędności (Wykres)"):
+                closed_history = [h for h in st.session_state.get('history', []) if h.get('is_closed', False)]
+                
+                if closed_history:
+                    chart_history = closed_history[-12:] 
+                    target_budget = st.session_state.get('target_budget', 0)
+                    
+                    start_idx = len(closed_history) - len(chart_history)
+                    labels = [f"#{start_idx + i + 1} ({h.get('month', '').split()[0]})" for i, h in enumerate(chart_history)]
+                    values = [float(target_budget - h.get('cost', 0)) for h in chart_history]
+                    
+                    chart_data = {
+                        "Cykl Rozliczeniowy": labels,
+                        "Zaoszczędzono PLN": values
+                    }
+                    
+                    st.caption("Widok ograniczony do ostatnich 12 miesięcy")
+                    st.bar_chart(chart_data, x="Cykl Rozliczeniowy", y="Zaoszczędzono PLN", color="#E50914", use_container_width=True)
+                else:
+                    st.info("Zamknij swój pierwszy cykl, aby zobaczyć wykres oszczędności!")
+            
+            st.write("---")
+            
+            # 2. Główny ekspander na całą historię – domyślnie zwinięty
+            with st.expander("📜 Historia cykli (szczegóły)"):
+                history_list = st.session_state.get('history', [])
+                
+                if history_list:
+                    # Wyciągamy unikalne lata i sortujemy malejąco
+                    available_years = sorted(list(set([h.get('month', ' 2026').split()[-1] for h in history_list])), reverse=True)
+                    
+                    # Dla każdego roku tworzymy OSOBNY ROZWIJANY EKSPANDER (zamiast zakładek)
+                    for year in available_years:
+                        with st.expander(f"📅 Rok {year}"):
+                            history_for_year = [h for h in history_list if h.get('month', '').endswith(year)]
+                            
+                            # Wewnątrz danego roku są zwinięte karty poszczególnych miesięcy
+                            for h in reversed(history_for_year):
+                                is_closed = h.get('is_closed', False)
+                                status_icon = "✅" if is_closed else "⏳"
+                                status_text = "Zamknięty" if is_closed else "Otwarty"
+                                
+                                with st.expander(f"{h.get('month', 'Nieznany')} ({status_icon} {status_text})"):
+                                    cost = h.get('cost', 0)
+                                    savings = st.session_state.get('target_budget', 0) - cost
+                                    
+                                    platforms = h.get('combo', [])
+                                    plats_html = "".join([platform_chip(p) for p in platforms]) if platforms else "*Brak*"
+                                    
+                                    st.markdown(f"**Zakupiono:** {plats_html} *(Zaoszczędzono: {savings:.2f} PLN)*", unsafe_allow_html=True)
+                                    st.write("")
+                                    
+                                    watched = h.get('covered', [])
+                                    if watched:
+                                        st.write("**Obejrzano:**")
+                                        for title in watched:
+                                            st.write(f"- {title.title()}")
+                                    else:
+                                        st.write("*Brak odhaczonych tytułów w tym cyklu.*")
+                else:
+                    st.write("*Brak historii do wyświetlenia.*")
 
 with tab_settings:
     st.header("⚙️ Ustawienia cen subskrypcji")
@@ -742,29 +894,23 @@ with tab_settings:
                 st.session_state['platform_prices'][p_name]['price'] = new_price
 
     st.write("---")
-    st.header("🗑️ Ustawienia Profilu")
-    if st.button("Resetuj ustawienia budżetu (powrót do ankiety)", type="secondary"):
-        st.session_state['target_budget'] = None
-        st.session_state['current_spend'] = None
-        save_data(st.session_state['logged_in_user'], {
-            "poczekalnia": st.session_state['waiting_room'],
-            "historia_wydatkow": st.session_state['history'],
-            "target_budget": None,
-            "current_spend": None
-        })
-        st.rerun()
-        
-    st.warning("Ta akcja jest nieodwracalna. Usunie Twoją historię wydatków, budżet oraz poczekalnię.")
-    if st.button("Wyczyść całe konto (Hard Reset)", type="primary"):
-        st.session_state['history'] = []
-        st.session_state['waiting_room'] = []
-        st.session_state['target_budget'] = None
-        st.session_state['current_spend'] = None
-        save_data(st.session_state['logged_in_user'], {
-            "poczekalnia": [],
-            "historia_wydatkow": [],
-            "target_budget": None,
-            "current_spend": None
-        })
-        st.session_state['toast_msg'] = ("Konto zostało zresetowane", "🧹")
-        st.rerun()
+    st.header("🗑️ Strefa niebezpieczna")
+    st.caption("Poniższe akcje usuną część lub całość Twoich danych. Bądź ostrożny.")
+    
+    c_danger1, c_danger2 = st.columns(2)
+    
+    with c_danger1:
+        if st.button("Resetuj ustawienia budżetu (powrót do ankiety)", type="secondary", use_container_width=True):
+            st.session_state['target_budget'] = None
+            st.session_state['current_spend'] = None
+            save_data(st.session_state['logged_in_user'], {
+                "poczekalnia": st.session_state['waiting_room'],
+                "historia_wydatkow": st.session_state['history'],
+                "target_budget": None,
+                "current_spend": None
+            })
+            st.rerun()
+            
+    with c_danger2:
+        if st.button("Wyczyść całe konto (Hard Reset)", type="primary", use_container_width=True):
+            confirm_hard_reset()
