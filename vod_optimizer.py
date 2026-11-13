@@ -4,8 +4,13 @@ import copy
 import itertools
 from datetime import datetime
 import urllib.parse
+import hashlib
 from supabase import create_client, Client
 import pandas as pd
+
+
+def hash_password(raw_password: str) -> str:
+    return hashlib.sha256(raw_password.encode("utf-8")).hexdigest()
 
 @st.dialog("⚠️ Usuwanie danych")
 def confirm_hard_reset():
@@ -65,36 +70,135 @@ def confirm_cycle_closure(watched_titles, unwatched_titles):
         st.session_state['toast_msg'] = ("Plan anulowany. Tytuły wracają do poczekalni, brak kosztów.", "↩️")
         st.rerun()
 
+@st.dialog("🎬 Zwiastun produkcji", width="large")
+def show_trailer_dialog(title, media_type, item_id):
+    yt_url = fetch_trailer_tmdb(media_type, item_id) if media_type and item_id else None
+    st.markdown(f"### 🍿 {title}")
+    if yt_url:
+        st.video(yt_url)
+    else:
+        query = urllib.parse.quote(f"{title} oficjalny zwiastun pl trailer")
+        yt_search = f"https://www.youtube.com/results?search_query={query}"
+        st.info("Brak bezpośredniego klipu w bazie TMDB dla tego tytułu.")
+        st.markdown(
+            f'<a href="{yt_search}" target="_blank" style="display:inline-block; background:#E50914; color:white; padding:10px 20px; border-radius:20px; text-decoration:none; font-weight:600;">▶️ Otwórz zwiastun na YouTube</a>',
+            unsafe_allow_html=True,
+        )
+
 # --- KONFIGURACJA STRONY ---
 st.set_page_config(page_title="Optymalizator Subskrypcji VOD", page_icon="🍿", layout="wide", initial_sidebar_state="expanded")
 
 # --- NOWOCZESNY DESIGN (CSS) ---
 modern_ui = """
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
 /* Ukrywamy śmieci, ale ZOSTAWIAMY górny pasek, żeby działało menu na telefonach */
 #MainMenu {visibility: hidden;}
 div[data-testid="stAppDeployButton"] {display: none;}
 footer {visibility: hidden;}
 
+/* Kinowe tło z delikatną poświatą i nowoczesna typografia */
+.stApp {
+    background: radial-gradient(circle at 50% 0%, rgba(229, 9, 20, 0.16) 0%, rgba(90, 46, 152, 0.09) 35%, #0b0d13 72%) !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+}
+
+h1, h2, h3 {
+    font-family: 'Outfit', sans-serif !important;
+    letter-spacing: -0.02em;
+}
+
+/* Baner Hero */
+.hero-banner {
+    background: linear-gradient(135deg, rgba(229, 9, 20, 0.16) 0%, rgba(20, 24, 36, 0.85) 55%, rgba(90, 46, 152, 0.18) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 22px;
+    padding: 26px 32px;
+    margin-bottom: 22px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(12px);
+}
+.hero-badge {
+    display: inline-block;
+    background: rgba(229, 9, 20, 0.2);
+    color: #ff6b72;
+    border: 1px solid rgba(229, 9, 20, 0.4);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 4px 12px;
+    border-radius: 999px;
+    margin-bottom: 10px;
+}
+.hero-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 2.4rem;
+    font-weight: 800;
+    margin: 0 0 6px 0;
+    background: linear-gradient(90deg, #ffffff 0%, #f3f4f6 60%, #ff7b82 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.hero-subtitle {
+    color: #9ca3af;
+    font-size: 0.98rem;
+    margin: 0;
+}
+
 /* Nowoczesne, zaokrąglone przyciski z animacją powiększenia */
-.stButton > button {
+.stButton > button, .stFormSubmitButton > button {
     border-radius: 24px !important;
     font-weight: 600 !important;
-    transition: all 0.3s ease !important;
-    border: none !important;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
+    transition: all 0.25s ease !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2) !important;
 }
-.stButton > button:hover {
+.stButton > button:hover, .stFormSubmitButton > button:hover {
     transform: translateY(-2px) !important;
-    box-shadow: 0 6px 12px rgba(229, 9, 20, 0.3) !important;
+    box-shadow: 0 6px 16px rgba(229, 9, 20, 0.38) !important;
+    border-color: rgba(229, 9, 20, 0.5) !important;
+}
+
+/* Karty KPI (st.metric) w stylu Glassmorphism */
+div[data-testid="stMetric"] {
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.015));
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-left: 4px solid #E50914;
+    border-radius: 16px;
+    padding: 16px 20px;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+    backdrop-filter: blur(10px);
+    transition: transform 0.25s ease, border-color 0.25s ease;
+}
+div[data-testid="stMetric"]:hover {
+    transform: translateY(-3px);
+    border-color: rgba(229, 9, 20, 0.6);
 }
 
 /* Delikatne podświetlenie kart (kontenerów) po najechaniu */
 div[data-testid="stVerticalBlockBorderWrapper"] {
-    transition: all 0.3s ease;
+    border-radius: 16px !important;
+    background: rgba(255, 255, 255, 0.018);
+    transition: all 0.25s ease;
 }
 div[data-testid="stVerticalBlockBorderWrapper"]:hover {
-    border-color: #555 !important;
+    border-color: rgba(229, 9, 20, 0.45) !important;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+}
+
+/* Plakaty w karuzeli z efektem powiększenia po najechaniu */
+.marquee-poster {
+    height: 168px;
+    margin-right: 16px;
+    border-radius: 12px;
+    box-shadow: 0 6px 14px rgba(0,0,0,0.45);
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.marquee-poster:hover {
+    transform: scale(1.07);
+    box-shadow: 0 10px 22px rgba(229, 9, 20, 0.5);
 }
 </style>
 """
@@ -169,12 +273,13 @@ def platform_chip(name):
         "Apple TV+": "#1C1C1E",
         "Canal+": "#000000",
         "SkyShowtime": "#001D66",
+        "Amazon Prime": "#00A8E1",
         "Amazon Prime Video": "#00A8E1"
     }
     bg_color = colors.get(name, "#555555") # Szary jako domyślny dla nierozpoznanych
     url = PLATFORMS.get(name, {}).get("url", "#")
     
-    return f'<a href="{url}" target="_blank" style="text-decoration: none;"><span style="background-color: {bg_color}; color: white; padding: 2px 10px; border-radius: 12px; font-size: 0.75em; font-weight: 600; margin-right: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); display: inline-block; margin-bottom: 4px;">{name}</span></a>'
+    return f'<a href="{url}" target="_blank" style="text-decoration: none;"><span style="background-color: {bg_color}; color: white; padding: 3px 11px; border-radius: 12px; font-size: 0.75em; font-weight: 600; margin-right: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.25); display: inline-block; margin-bottom: 4px; border: 1px solid rgba(255,255,255,0.12);">{name}</span></a>'
 
 def rating_badge(rating):
     if not rating: return ""
@@ -186,6 +291,23 @@ def rating_badge(rating):
         return f'<span style="background-color: {bg}; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.55em; vertical-align: middle; margin-left: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">⭐ {r:.1f}</span>'
     except:
         return ""
+
+def meta_badge(meta):
+    if not meta:
+        return ""
+    parts = []
+    media_type = meta.get("media_type")
+    if media_type == "movie":
+        parts.append("🎬 Film")
+    elif media_type == "tv":
+        parts.append("📺 Serial")
+    year = meta.get("year")
+    if year:
+        parts.append(str(year))
+    if not parts:
+        return ""
+    label = " • ".join(parts)
+    return f'<span style="background-color: rgba(255,255,255,0.08); color: #d1d5db; padding: 2px 8px; border-radius: 10px; font-size: 0.5em; font-weight: 500; vertical-align: middle; margin-left: 6px; border: 1px solid rgba(255,255,255,0.12);">{label}</span>'
 
 def get_current_month_name():
     months_pl = ["Styczeń", "Luty", "Marzec", "Kwiecień", "Maj", "Czerwiec", "Lipiec", "Sierpień", "Wrzesień", "Październik", "Listopad", "Grudzień"]
@@ -204,43 +326,66 @@ def get_watch_history(title, history):
                 return f"{h.get('month', 'Nieznany')}{plat_str}"
     return None
 
-# --- KARUZELA PLAKATÓW ---
+# --- TRENDY TYGODNIA I KARUZELA PLAKATÓW ---
 @st.cache_data(ttl=3600)
-def display_marquee():
-    if TMDB_API_KEY == "BŁĄD_KLUCZA": return
+def fetch_trending_tmdb():
+    if TMDB_API_KEY == "BŁĄD_KLUCZA":
+        return []
     url = f"https://api.themoviedb.org/3/trending/all/week?api_key={TMDB_API_KEY}&language=pl-PL"
     try:
         resp = requests.get(url, timeout=5).json()
         results = resp.get('results', [])
-        if not results: return
-        
-        posters_html = ""
+        trending = []
         for item in results[:15]:
             path = item.get('poster_path')
-            if path:
-                img_url = f"https://image.tmdb.org/t/p/w154{path}"
-                posters_html += f'<img src="{img_url}" style="height: 160px; margin-right: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">'
-        
-        marquee_html = f"""
-        <div style="overflow: hidden; white-space: nowrap; margin-bottom: 30px; padding: 10px 0; 
-                    -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent); 
-                    mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);">
-            <div style="display: inline-block; animation: scroll 35s linear infinite;" 
-                 onmouseover="this.style.animationPlayState='paused'" 
-                 onmouseout="this.style.animationPlayState='running'">
-                {posters_html} {posters_html}
-            </div>
-        </div>
-        <style>
-        @keyframes scroll {{
-            0% {{ transform: translateX(0); }}
-            100% {{ transform: translateX(-50%); }}
-        }}
-        </style>
-        """
-        st.markdown(marquee_html, unsafe_allow_html=True)
+            title = item.get('title') or item.get('name')
+            if path and title:
+                vote = item.get('vote_average')
+                rating_str = f"⭐ {vote:.1f}" if vote else ""
+                media_type = item.get('media_type', 'movie')
+                item_id = item.get('id')
+                tmdb_link = f"https://www.themoviedb.org/{media_type}/{item_id}?language=pl-PL" if item_id and media_type in ['movie', 'tv'] else "#"
+                trending.append({
+                    "title": title,
+                    "poster_url": f"https://image.tmdb.org/t/p/w154{path}",
+                    "rating_str": rating_str,
+                    "tmdb_link": tmdb_link
+                })
+        return trending
     except:
-        pass
+        return []
+
+def display_marquee():
+    trending = fetch_trending_tmdb()
+    if not trending:
+        return
+    posters_html = ""
+    for item in trending:
+        safe_tooltip = f"{item['title']} ({item['rating_str']})".replace('"', '&quot;')
+        posters_html += (
+            f'<a href="{item["tmdb_link"]}" target="_blank" title="{safe_tooltip}" style="text-decoration: none;">'
+            f'<img src="{item["poster_url"]}" class="marquee-poster" alt="{safe_tooltip}">'
+            f'</a>'
+        )
+
+    marquee_html = f"""
+    <div style="overflow: hidden; white-space: nowrap; margin-bottom: 24px; padding: 12px 0; 
+                -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent); 
+                mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);">
+        <div style="display: inline-block; animation: scroll 38s linear infinite;" 
+             onmouseover="this.style.animationPlayState='paused'" 
+             onmouseout="this.style.animationPlayState='running'">
+            {posters_html} {posters_html}
+        </div>
+    </div>
+    <style>
+    @keyframes scroll {{
+        0% {{ transform: translateX(0); }}
+        100% {{ transform: translateX(-50%); }}
+    }}
+    </style>
+    """
+    st.markdown(marquee_html, unsafe_allow_html=True)
 
 # Inicjalizacja stanu aplikacji
 if 'platform_prices' not in st.session_state:
@@ -263,25 +408,48 @@ if 'search_input' not in st.session_state:
     st.session_state['search_input'] = ""
 if 'clear_flag' not in st.session_state:
     st.session_state['clear_flag'] = False
+if 'pending_titles' not in st.session_state:
+    st.session_state['pending_titles'] = []
 
-def fetch_availability_tmdb(title):
-    if TMDB_API_KEY == "BŁĄD_KLUCZA": return [], None, None
-    search_url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={title}&language=pl-PL"
+@st.cache_data(ttl=3600)
+def fetch_trailer_tmdb(media_type, item_id):
+    if TMDB_API_KEY == "BŁĄD_KLUCZA" or not media_type or not item_id:
+        return None
+    for lang in ("pl-PL", "en-US"):
+        url = f"https://api.themoviedb.org/3/{media_type}/{item_id}/videos?api_key={TMDB_API_KEY}&language={lang}"
+        try:
+            resp = requests.get(url, timeout=5).json()
+            videos = resp.get("results", [])
+            # Najpierw szukamy oficjalnego Trailera na YouTube, potem dowolnego Teaser/Clip na YouTube
+            for v in videos:
+                if v.get("site") == "YouTube" and v.get("type") == "Trailer" and v.get("key"):
+                    return f"https://www.youtube.com/watch?v={v['key']}"
+            for v in videos:
+                if v.get("site") == "YouTube" and v.get("key"):
+                    return f"https://www.youtube.com/watch?v={v['key']}"
+        except Exception:
+            pass
+    return None
+
+@st.cache_data(ttl=3600)
+def fetch_tmdb_details(title):
+    if TMDB_API_KEY == "BŁĄD_KLUCZA":
+        return [], None, None, {}
+    search_url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={urllib.parse.quote(title.strip())}&language=pl-PL"
     try:
         response = requests.get(search_url, timeout=5).json()
-        results = response.get('results')
-        if not results: return [], None, None
+        results = [r for r in response.get('results', []) if r.get('media_type') in ('movie', 'tv')]
+        if not results:
+            return [], None, None, {}
         
         # --- INTELIGENTNE DOPASOWANIE TYTUŁU ---
         user_query = title.strip().lower()
         best_match = results[0] # Domyślnie bierzemy pierwszy wynik (najpopularniejszy)
         
         for item in results:
-            # TMDB używa 'title' dla filmów i 'name' dla seriali
             item_title = (item.get('title') or item.get('name') or "").lower()
             item_original = (item.get('original_title') or item.get('original_name') or "").lower()
             
-            # Jeśli trafimy w punkt, nadpisujemy best_match i przerywamy szukanie
             if user_query == item_title or user_query == item_original:
                 best_match = item
                 break
@@ -293,8 +461,25 @@ def fetch_availability_tmdb(title):
         vote_avg = best_match.get('vote_average')
         rating = round(vote_avg, 1) if vote_avg else None
         poster_url = f"https://image.tmdb.org/t/p/w154{poster_path}" if poster_path else None
+
+        matched_title = best_match.get('title') or best_match.get('name') or title.title()
+        original_title = best_match.get('original_title') or best_match.get('original_name') or ""
+        raw_date = best_match.get('release_date') or best_match.get('first_air_date') or ""
+        year = raw_date[:4] if len(raw_date) >= 4 else None
+        overview = (best_match.get('overview') or "").strip()
+
+        meta_info = {
+            "item_id": item_id,
+            "matched_title": matched_title,
+            "original_title": original_title,
+            "media_type": media_type,
+            "year": year,
+            "overview": overview,
+            "tmdb_url": f"https://www.themoviedb.org/{media_type}/{item_id}?language=pl-PL" if item_id else None
+        }
         
-        if media_type not in ['movie', 'tv']: return [], poster_url, rating
+        if media_type not in ['movie', 'tv']:
+            return [], poster_url, rating, meta_info
         providers_url = f"https://api.themoviedb.org/3/{media_type}/{item_id}/watch/providers?api_key={TMDB_API_KEY}"
         prov_response = requests.get(providers_url, timeout=5).json()
         pl_data = prov_response.get('results', {}).get('PL', {})
@@ -306,9 +491,13 @@ def fetch_availability_tmdb(title):
             for p_name, p_data in PLATFORMS.items():
                 if p_data['jw_id'] in provider_ids:
                     available_platforms.append(p_name)
-        return available_platforms, poster_url, rating
-    except Exception as e:
-        return [], None, None
+        return available_platforms, poster_url, rating, meta_info
+    except Exception:
+        return [], None, None, {}
+
+def fetch_availability_tmdb(title):
+    avail, poster, rating, _ = fetch_tmdb_details(title)
+    return avail, poster, rating
 
 def optimize_subscriptions(titles_availability):
     platform_names = list(PLATFORMS.keys())
@@ -376,12 +565,16 @@ if not st.session_state['logged_in_user']:
                         st.error("Wprowadź poprawny format e-mail.")
                     else:
                         clean_email = user_email.lower().strip()
+                        hashed_pass = hash_password(user_password)
                         with st.spinner("Weryfikacja..."):
                             try:
                                 response = supabase.table("user_data").select("password").eq("user_email", clean_email).execute()
                                 if len(response.data) > 0:
                                     stored_pass = response.data[0].get("password")
-                                    if stored_pass == user_password:
+                                    if stored_pass == hashed_pass or stored_pass == user_password:
+                                        # Automatyczna migracja starszych haseł tekstowych do SHA-256
+                                        if stored_pass == user_password and stored_pass != hashed_pass:
+                                            supabase.table("user_data").update({"password": hashed_pass}).eq("user_email", clean_email).execute()
                                         st.session_state['logged_in_user'] = clean_email
                                         st.rerun()
                                     else:
@@ -389,7 +582,7 @@ if not st.session_state['logged_in_user']:
                                 else:
                                     new_user = {
                                         "user_email": clean_email, 
-                                        "password": user_password,
+                                        "password": hashed_pass,
                                         "poczekalnia": [], 
                                         "historia_wydatkow": []
                                     }
@@ -501,22 +694,32 @@ with c_prof:
             st.session_state['cloud_loaded'] = False
             st.rerun()
 
-# Karuzela i tytuł ładują się dopiero pod profilem
+# Karuzela i baner Hero ładują się pod profilem
 display_marquee()
 
-st.title("🎬 Optymalizator Subskrypcji VOD")
+st.markdown(
+    """
+    <div class="hero-banner">
+        <div class="hero-badge">✨ Inteligentny Asystent Streamingowy</div>
+        <h1 class="hero-title">🎬 Optymalizator Subskrypcji VOD</h1>
+        <p class="hero-subtitle">Wybieraj to, co chcesz obejrzeć — algorytm policzy, które platformy opłaca się włączyć w tym miesiącu, żeby nie przepłacać.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-# Szybkie zsumowanie oszczędności z całej historii do kafelka KPI
-total_saved = sum([h.get("savings", 0) for h in st.session_state['history']])
+# Szybkie zsumowanie oszczędności z zamkniętych cykli (spójne w całej aplikacji)
+closed_cycles = [h for h in st.session_state['history'] if h.get('is_closed', False)]
+total_saved = sum([h.get("savings", st.session_state['current_spend'] - h.get("cost", 0)) for h in closed_cycles])
 
 kpi1, kpi2, kpi3 = st.columns(3)
 with kpi1:
-    st.metric("Docelowy limit", f"{st.session_state['target_budget']:.2f} zł")
+    st.metric("🎯 Docelowy limit", f"{st.session_state['target_budget']:.2f} zł")
 with kpi2:
-    st.metric("Dawne wydatki", f"{st.session_state['current_spend']:.2f} zł")
+    st.metric("💳 Dawne wydatki", f"{st.session_state['current_spend']:.2f} zł")
 with kpi3:
     # Delta (zielona strzałka) pokaże się, jeśli oszczędności są większe od zera
-    st.metric("Łączne oszczędności", f"{total_saved:.2f} zł", delta=f"{total_saved:.2f} zł" if total_saved > 0 else None)
+    st.metric("💰 Łączne oszczędności", f"{total_saved:.2f} zł", delta=f"{total_saved:.2f} zł ({len(closed_cycles)} cykli)" if total_saved > 0 else None)
 
 st.write("---") # Oddzielenie headera od reszty apki linią
 
@@ -527,41 +730,98 @@ with tab_calc:
 
     with col1:
         st.subheader("Etap 1: Czego szukamy?")
-        
-        if st.session_state['clear_flag']:
-            st.session_state['search_input'] = ""
-            st.session_state['clear_flag'] = False
-            
-        titles_input = st.text_area("Wpisz filmy/seriale (każdy w nowej linii):", height=120, key="search_input")
+
+        def add_to_pending(raw_text):
+            if not raw_text:
+                return
+            # Obsługa wpisywania pojedynczego tytułu lub kilku po przecinku / średniku / nowej linii
+            parts = [p.strip() for chunk in raw_text.replace(";", ",").split("\n") for p in chunk.split(",") if p.strip()]
+            added_any = False
+            existing_lower = [x.lower() for x in st.session_state['pending_titles']]
+            for part in parts:
+                if part.lower() not in existing_lower:
+                    st.session_state['pending_titles'].append(part)
+                    existing_lower.append(part.lower())
+                    added_any = True
+            if added_any and len(parts) == 1:
+                st.session_state["toast_msg"] = (f"Dodano „{parts[0]}” do kolejki!", "🎬")
+            elif added_any:
+                st.session_state["toast_msg"] = (f"Dodano {len(parts)} tytułów do kolejki!", "🎬")
+
+        with st.form("add_title_form", clear_on_submit=True, border=True):
+            f_col1, f_col2 = st.columns([4, 1])
+            with f_col1:
+                new_title_input = st.text_input(
+                    "Dodaj film lub serial (wciśnij Enter lub kliknij Dodaj):",
+                    placeholder="np. Diuna, The Bear, Fallout (możesz wpisać kilka po przecinku)...",
+                    label_visibility="collapsed",
+                )
+            with f_col2:
+                submitted_title = st.form_submit_button("➕ Dodaj", use_container_width=True)
+            if submitted_title and new_title_input.strip():
+                add_to_pending(new_title_input)
+                st.rerun()
+
+        # Wyświetlanie kolejki dodanych tytułów jako klikalne pigułki
+        if st.session_state['pending_titles']:
+            st.caption(f"🎯 **Twoja kolejka do sprawdzenia ({len(st.session_state['pending_titles'])}):** *(kliknij tytuł, aby usunąć)*")
+            pill_cols = st.columns(3)
+            for p_idx, p_title in enumerate(list(st.session_state['pending_titles'])):
+                with pill_cols[p_idx % 3]:
+                    if st.button(f"✕ {p_title}", key=f"rm_pending_{p_idx}_{p_title}", use_container_width=True):
+                        st.session_state['pending_titles'].remove(p_title)
+                        st.rerun()
+        else:
+            st.caption("✨ *Kolejka jest pusta — wpisz tytuł powyżej lub wybierz coś z hitów tygodnia poniżej.*")
+
+        trending_items = fetch_trending_tmdb()
+        if trending_items:
+            with st.expander("🔥 Zainspiruj się: Hity tygodnia (dodaj 1 kliknięciem)"):
+                st.caption("Kliknij tytuł poniżej, aby dorzucić go od razu do swojej kolejki:")
+                t_cols = st.columns(2)
+                for idx, t_item in enumerate(trending_items[:8]):
+                    t_title = t_item["title"]
+                    t_rating = f" ({t_item['rating_str']})" if t_item.get("rating_str") else ""
+                    with t_cols[idx % 2]:
+                        if st.button(
+                            f"➕ {t_title}{t_rating}",
+                            key=f"trend_add_{idx}",
+                            use_container_width=True,
+                        ):
+                            add_to_pending(t_title)
+                            st.rerun()
+
         include_waiting_room = st.checkbox("➕ Uwzględnij tytuły z mojej Kupki wstydu", value=True)
         
-        if st.button("Sprawdź dostępność 🔍"):
-            current_titles = [t.strip() for t in titles_input.split('\n') if t.strip()]
+        if st.button("Sprawdź dostępność i dobierz pakiet 🔍", type="primary", use_container_width=True):
+            current_titles = list(st.session_state['pending_titles'])
             
             if include_waiting_room:
-                all_titles = list(set(current_titles + st.session_state['waiting_room']))
+                all_titles = list(dict.fromkeys(current_titles + st.session_state['waiting_room']))
             else:
-                all_titles = list(set(current_titles))
+                all_titles = list(dict.fromkeys(current_titles))
             
             if not all_titles:
-                st.warning("Brak tytułów do sprawdzenia!")
+                st.warning("Dodaj przynajmniej jeden tytuł do kolejki (lub zaznacz Kupkę wstydu)!")
             else:
-                with st.spinner("Pobieram oceny, plakaty i dostępność z bazy TMDB... 🎬"):
+                with st.spinner("Pobieram oceny, plakaty, opisy i dostępność z bazy TMDB... 🎬"):
                     st.session_state['titles_to_check'] = all_titles
-                    availability, posters, ratings = {}, {}, {}
+                    availability, posters, ratings, metas = {}, {}, {}, {}
                     for title in all_titles:
-                        avail, poster, rating = fetch_availability_tmdb(title)
+                        avail, poster, rating, meta_info = fetch_tmdb_details(title)
                         availability[title] = avail
                         posters[title] = poster
                         ratings[title] = rating
+                        metas[title] = meta_info
                     st.session_state['current_availability'] = availability
                     st.session_state['current_posters'] = posters
                     st.session_state['current_ratings'] = ratings
-                st.session_state['clear_flag'] = True
+                    st.session_state['current_metas'] = metas
+                st.session_state['pending_titles'] = []
                 st.rerun()
 
         if not st.session_state['current_availability']:
-            st.info("💡 **Podpowiedź:** Wpisz powyżej tytuły, które chodzą Ci po głowie, a algorytm automatycznie przeszuka platformy i dobierze najtańszy pakiet.")
+            st.info("💡 **Podpowiedź:** Dodaj powyżej tytuły, które chodzą Ci po głowie, a algorytm automatycznie przeszuka platformy i dobierze najtańszy pakiet.")
 
         if st.session_state['current_availability']:
             st.write("---")
@@ -570,21 +830,33 @@ with tab_calc:
             availability = st.session_state['current_availability']
             posters = st.session_state.get('current_posters', {})
             ratings = st.session_state.get('current_ratings', {})
+            metas = st.session_state.get('current_metas', {})
             
             titles_list = list(availability.keys())
             for title in titles_list:
                 with st.container(border=True):
-                    c_img, c_info, c_action = st.columns([1, 4, 1])
+                    c_img, c_info, c_action = st.columns([1.1, 3.7, 1.2])
                     with c_img:
                         poster_url = posters.get(title)
                         if poster_url:
-                            st.markdown(f'<img src="{poster_url}" style="width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">', unsafe_allow_html=True)
+                            st.markdown(f'<img src="{poster_url}" style="width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.35);">', unsafe_allow_html=True)
                         else:
-                            st.markdown('<div style="width: 100%; aspect-ratio: 2/3; background-color: #1e1e1e; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 2em; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">🎬</div>', unsafe_allow_html=True)
+                            st.markdown('<div style="width: 100%; aspect-ratio: 2/3; background-color: #1e1e1e; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 2em; box-shadow: 0 4px 10px rgba(0,0,0,0.35);">🎬</div>', unsafe_allow_html=True)
                     
                     with c_info:
                         rating = ratings.get(title)
-                        st.markdown(f"### {title.title()} {rating_badge(rating)}", unsafe_allow_html=True)
+                        meta = metas.get(title, {})
+                        display_title = meta.get("matched_title") or title.title()
+                        st.markdown(f"### {display_title} {rating_badge(rating)}{meta_badge(meta)}", unsafe_allow_html=True)
+
+                        orig_title = meta.get("original_title", "")
+                        if orig_title and orig_title.lower() != display_title.lower():
+                            st.caption(f"Tytuł oryginalny: *{orig_title}*")
+
+                        overview = meta.get("overview", "")
+                        if overview:
+                            short_overview = overview[:155] + "…" if len(overview) > 155 else overview
+                            st.caption(short_overview)
                         
                         history_match = get_watch_history(title, st.session_state['history'])
                         if history_match:
@@ -598,7 +870,9 @@ with tab_calc:
                             st.markdown("*Brak w abonamentach (tylko wypożyczalnie/zakup).*")
                             
                     with c_action:
-                        if st.button("🗑️ Odrzuć", key=f"discard_{title}"):
+                        if st.button("▶️ Zwiastun", key=f"trailer_{title}", use_container_width=True):
+                            show_trailer_dialog(display_title, meta.get("media_type"), meta.get("item_id"))
+                        if st.button("🗑️ Odrzuć", key=f"discard_{title}", use_container_width=True):
                             if title in st.session_state['titles_to_check']:
                                 st.session_state['titles_to_check'].remove(title)
                             if title in st.session_state['current_availability']:
@@ -618,11 +892,23 @@ with tab_calc:
                     
                     live_cost = sum(st.session_state['platform_prices'][p]["price"] for p in selected_platforms)
                     live_left = st.session_state['target_budget'] - live_cost
+                    live_covered_count = sum(
+                        1
+                        for t in st.session_state['titles_to_check']
+                        if any(p in selected_platforms for p in st.session_state['current_availability'].get(t, []))
+                    )
+                    total_checked_count = len(st.session_state['titles_to_check'])
+                    if live_covered_count > 0:
+                        cost_per_title = live_cost / live_covered_count
+                        cinema_cmp = " — taniej niż bilet do kina! 🍿" if cost_per_title < 30 else ""
+                        per_title_info = f" | 🎯 Pokrycie: **{live_covered_count}/{total_checked_count}** tyt. (**{cost_per_title:.2f} zł** / tytuł{cinema_cmp})"
+                    else:
+                        per_title_info = f" | 🎯 Pokrycie: **0/{total_checked_count}** tyt."
                     
                     if live_cost > st.session_state['target_budget']:
-                        st.error(f"💸 Koszt wybranych: **{live_cost:.2f} PLN** (Przekraczasz budżet o {abs(live_left):.2f} PLN!)")
+                        st.error(f"💸 Koszt wybranych: **{live_cost:.2f} PLN** (Przekraczasz budżet o {abs(live_left):.2f} PLN!){per_title_info}")
                     else:
-                        st.info(f"💸 Koszt wybranych: **{live_cost:.2f} PLN** (Zostaje Ci: {live_left:.2f} PLN z budżetu)")
+                        st.info(f"💸 Koszt wybranych: **{live_cost:.2f} PLN** (Zostaje Ci: {live_left:.2f} PLN z budżetu){per_title_info}")
                     
                     if st.button("Zatwierdź plan i aktualizuj poczekalnię ✅", type="primary", use_container_width=True):
                         covered, uncovered = [], []
@@ -705,7 +991,7 @@ with tab_calc:
                 
                 if st.session_state['target_budget'] > 0:
                     percent_used = min(current_cost / st.session_state['target_budget'], 1.0)
-                    st.progress(percent_used, text=f"Wykorzystanie budżetu: {percent_used*100:.0f}%")
+                    st.progress(percent_used, text=f"💸 Wykorzystanie budżetu: {percent_used*100:.0f}%")
                     if current_cost > st.session_state['target_budget']:
                         st.warning("⚠️ Przekroczyłeś swój limit budżetowy na ten cykl!")
                 
@@ -715,6 +1001,12 @@ with tab_calc:
                 if res.get('covered'):
                     if 'watched_temp' not in res:
                         res['watched_temp'] = []
+
+                    total_covered = len(res['covered'])
+                    watched_count = len([t for t in res['covered'] if t in res.get('watched_temp', [])])
+                    if total_covered > 0:
+                        watch_ratio = min(watched_count / total_covered, 1.0)
+                        st.progress(watch_ratio, text=f"🍿 Postęp oglądania: {watched_count} z {total_covered} tytułów ({watch_ratio*100:.0f}%)")
                         
                     if st.button("☑️ Zaznacz wszystkie jako obejrzane"):
                         for t in res['covered']:
@@ -750,7 +1042,7 @@ with tab_calc:
                 else:
                     st.write("*Brak tytułów do obejrzenia.*")
                     if st.button("🏁 Zakończ ten plan rozliczeniowy", type="primary", use_container_width=True):
-                        confirm_cycle_closure(watched, unwatched)
+                        confirm_cycle_closure([], [])
         else:
             st.info("Zatwierdź plan z lewej strony, aby rozpocząć nowy cykl rozliczeniowy.")
             
@@ -759,14 +1051,21 @@ with tab_calc:
         
         if 'wait_avail' not in st.session_state:
             st.session_state['wait_avail'] = {}
+        if 'wait_details' not in st.session_state:
+            st.session_state['wait_details'] = {}
 
         if st.session_state['waiting_room']:
-            missing = [item for item in st.session_state['waiting_room'] if item not in st.session_state['wait_avail']]
+            missing = [item for item in st.session_state['waiting_room'] if item not in st.session_state['wait_avail'] or item not in st.session_state['wait_details']]
             if missing:
                 with st.spinner("Analizuję zasoby Twojej kupki wstydu..."):
                     for item in missing:
-                        avail, _, _ = fetch_availability_tmdb(item)
+                        avail, poster, rating, meta_info = fetch_tmdb_details(item)
                         st.session_state['wait_avail'][item] = avail
+                        st.session_state['wait_details'][item] = {
+                            "poster": poster,
+                            "rating": rating,
+                            "meta": meta_info
+                        }
             
             platform_counts = {p: 0 for p in PLATFORMS.keys()}
             for item in st.session_state['waiting_room']:
@@ -786,51 +1085,124 @@ with tab_calc:
             sorted_waiting_room = sorted(list(st.session_state['waiting_room']))
             for i, item in enumerate(sorted_waiting_room):
                 with st.container(border=True):
-                    col_text, col_btn = st.columns([4, 1])
+                    col_thumb, col_text, col_btn = st.columns([1, 4.6, 1.4])
+                    details = st.session_state['wait_details'].get(item, {})
+                    w_poster = details.get("poster")
+                    w_rating = details.get("rating")
+                    w_meta = details.get("meta", {})
+                    display_name = w_meta.get("matched_title") or item.title()
+
+                    with col_thumb:
+                        if w_poster:
+                            st.markdown(f'<img src="{w_poster}" style="width: 52px; aspect-ratio: 2/3; object-fit: cover; border-radius: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.35);">', unsafe_allow_html=True)
+                        else:
+                            st.markdown('<div style="width: 52px; aspect-ratio: 2/3; background-color: #1e1e1e; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 1.2em;">🎬</div>', unsafe_allow_html=True)
+
                     with col_text:
                         safe_title = urllib.parse.quote(item)
-                        link = f"https://www.themoviedb.org/search?query={safe_title}&language=pl-PL"
+                        link = w_meta.get("tmdb_url") or f"https://www.themoviedb.org/search?query={safe_title}&language=pl-PL"
                         platforms = st.session_state['wait_avail'].get(item, [])
-                        plat_str = "".join([platform_chip(p) for p in platforms]) if platforms else ""
-                        st.markdown(f"- **[{item.title()}]({link})** {plat_str}", unsafe_allow_html=True)
+                        plat_str = "".join([platform_chip(p) for p in platforms]) if platforms else '<span style="color: gray; font-size: 0.8em;">Brak w abonamentach</span>'
+                        st.markdown(
+                            f"**[{display_name}]({link})** {rating_badge(w_rating)}{meta_badge(w_meta)}<br>{plat_str}",
+                            unsafe_allow_html=True
+                        )
                     with col_btn:
-                        if st.button("❌", key=f"del_wait_{i}_{item}"):
-                            st.session_state['waiting_room'].remove(item)
-                            save_data(st.session_state['logged_in_user'], {
-                                "poczekalnia": st.session_state['waiting_room'],
-                                "historia_wydatkow": st.session_state['history'],
-                                "target_budget": st.session_state['target_budget'],
-                                "current_spend": st.session_state['current_spend']
-                            })
-                            st.session_state['toast_msg'] = (f"Usunięto {item.title()} z kupki wstydu", "🗑️")
-                            st.rerun()
+                        b_tr, b_del = st.columns(2)
+                        with b_tr:
+                            if st.button("▶️", key=f"tr_wait_{i}_{item}", help="Obejrzyj zwiastun"):
+                                show_trailer_dialog(display_name, w_meta.get("media_type"), w_meta.get("item_id"))
+                        with b_del:
+                            if st.button("❌", key=f"del_wait_{i}_{item}", help="Usuń z kupki wstydu"):
+                                st.session_state['waiting_room'].remove(item)
+                                save_data(st.session_state['logged_in_user'], {
+                                    "poczekalnia": st.session_state['waiting_room'],
+                                    "historia_wydatkow": st.session_state['history'],
+                                    "target_budget": st.session_state['target_budget'],
+                                    "current_spend": st.session_state['current_spend']
+                                })
+                                st.session_state['toast_msg'] = (f"Usunięto {item.title()} z kupki wstydu", "🗑️")
+                                st.rerun()
         else:
             st.write("*Pusto. Jesteś na bieżąco!*")
 
         if st.session_state['history']:
             st.write("---")
             
-            # 1. Wykres ukryty domyślnie w ekspanderze
-            with st.expander("📊 Trend Twoich oszczędności (Wykres)"):
+            # 1. Wykres i kamienie milowe oszczędności
+            with st.expander("📊 Trend Twoich oszczędności i nagrody (Wykres)", expanded=True):
                 closed_history = [h for h in st.session_state.get('history', []) if h.get('is_closed', False)]
                 
                 if closed_history:
                     chart_history = closed_history[-12:] 
-                    target_budget = st.session_state.get('target_budget', 0)
+                    current_spend_base = st.session_state.get('current_spend', 0) or st.session_state.get('target_budget', 0)
                     
                     start_idx = len(closed_history) - len(chart_history)
-                    labels = [f"#{start_idx + i + 1} ({h.get('month', '').split()[0]})" for i, h in enumerate(chart_history)]
-                    values = [float(target_budget - h.get('cost', 0)) for h in chart_history]
+                    chart_rows = []
+                    for i, h in enumerate(chart_history):
+                        val = round(float(h.get('savings', current_spend_base - h.get('cost', 0))), 2)
+                        cost_val = round(float(h.get('cost', 0)), 2)
+                        chart_rows.append({
+                            "Cykl": f"#{start_idx + i + 1} ({h.get('month', '').split()[0]})",
+                            "Kolejność": i,
+                            "Oszczędność (PLN)": val,
+                            "Wydano (PLN)": cost_val,
+                            "Platformy": ", ".join(h.get('combo', [])) or "Brak"
+                        })
                     
-                    chart_data = {
-                        "Cykl Rozliczeniowy": labels,
-                        "Zaoszczędzono PLN": values
-                    }
-                    
-                    st.caption("Widok ograniczony do ostatnich 12 miesięcy")
-                    st.bar_chart(chart_data, x="Cykl Rozliczeniowy", y="Zaoszczędzono PLN", color="#E50914", use_container_width=True)
+                    if total_saved > 0:
+                        cinema_tickets = int(total_saved // 32)
+                        pizzas = int(total_saved // 45)
+                        free_months = round(total_saved / max(st.session_state.get('target_budget', 60.0), 1.0), 1)
+                        st.markdown(
+                            f"""
+                            <div style="background: rgba(22, 163, 74, 0.12); border: 1px solid rgba(22, 163, 74, 0.35); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; font-size: 0.86rem;">
+                                🏆 <b>Twoje oszczędności ({total_saved:.2f} zł) to równowartość:</b><br>
+                                🎟️ <b>{cinema_tickets}</b> biletów do kina &nbsp;•&nbsp; 🍕 <b>{pizzas}</b> dużych pizz &nbsp;•&nbsp; 🍿 <b>{free_months}</b> mies. budżetu VOD gratis!
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+                    st.caption("Ostatnie zamknięte cykle rozliczeniowe (najedź na słupek po szczegóły):")
+                    st.vega_lite_chart(
+                        chart_rows,
+                        {
+                            "height": 230,
+                            "background": "transparent",
+                            "mark": {
+                                "type": "bar",
+                                "cornerRadiusTopLeft": 8,
+                                "cornerRadiusTopRight": 8,
+                            },
+                            "encoding": {
+                                "x": {
+                                    "field": "Cykl",
+                                    "type": "ordinal",
+                                    "sort": {"field": "Kolejność"},
+                                    "axis": {"labelAngle": 0, "title": None, "labelColor": "#9ca3af"},
+                                },
+                                "y": {
+                                    "field": "Oszczędność (PLN)",
+                                    "type": "quantitative",
+                                    "axis": {"title": "Zaoszczędzono (PLN)", "gridColor": "rgba(255,255,255,0.07)", "labelColor": "#9ca3af", "titleColor": "#9ca3af"},
+                                },
+                                "color": {
+                                    "condition": {"test": "datum['Oszczędność (PLN)'] >= 0", "value": "#E50914"},
+                                    "value": "#6b7280",
+                                },
+                                "tooltip": [
+                                    {"field": "Cykl", "type": "ordinal", "title": "Cykl"},
+                                    {"field": "Oszczędność (PLN)", "type": "quantitative", "title": "Zaoszczędzono (PLN)", "format": ".2f"},
+                                    {"field": "Wydano (PLN)", "type": "quantitative", "title": "Koszt pakietu (PLN)", "format": ".2f"},
+                                    {"field": "Platformy", "type": "ordinal", "title": "Wybrane platformy"},
+                                ],
+                            },
+                        },
+                        use_container_width=True,
+                    )
                 else:
-                    st.info("Zamknij swój pierwszy cykl, aby zobaczyć wykres oszczędności!")
+                    st.info("Zamknij swój pierwszy cykl, aby zobaczyć wykres oszczędności i przelicznik nagród!")
             
             st.write("---")
             
@@ -855,12 +1227,13 @@ with tab_calc:
                                 
                                 with st.expander(f"{h.get('month', 'Nieznany')} ({status_icon} {status_text})"):
                                     cost = h.get('cost', 0)
-                                    savings = st.session_state.get('target_budget', 0) - cost
+                                    current_spend_base = st.session_state.get('current_spend', 0) or st.session_state.get('target_budget', 0)
+                                    savings = h.get('savings', current_spend_base - cost)
                                     
                                     platforms = h.get('combo', [])
                                     plats_html = "".join([platform_chip(p) for p in platforms]) if platforms else "*Brak*"
                                     
-                                    st.markdown(f"**Zakupiono:** {plats_html} *(Zaoszczędzono: {savings:.2f} PLN)*", unsafe_allow_html=True)
+                                    st.markdown(f"**Zakupiono:** {plats_html} *(Koszt: {cost:.2f} PLN | Zaoszczędzono: {savings:.2f} PLN)*", unsafe_allow_html=True)
                                     st.write("")
                                     
                                     watched = h.get('covered', [])
@@ -892,6 +1265,29 @@ with tab_settings:
             new_price = st.number_input(f"{p_name} (PLN)", value=float(p_data['price']), step=1.0, min_value=0.0)
             if st.session_state['platform_prices'][p_name]['price'] != new_price:
                 st.session_state['platform_prices'][p_name]['price'] = new_price
+
+    c_save_p1, c_save_p2 = st.columns(2)
+    with c_save_p1:
+        if st.button("💾 Zapisz nowe ceny w chmurze", type="primary", use_container_width=True):
+            save_data(st.session_state['logged_in_user'], {
+                "poczekalnia": st.session_state['waiting_room'],
+                "historia_wydatkow": st.session_state['history'],
+                "target_budget": st.session_state['target_budget'],
+                "current_spend": st.session_state['current_spend']
+            })
+            st.session_state['toast_msg'] = ("Nowe ceny subskrypcji zostały zapisane!", "💾")
+            st.rerun()
+    with c_save_p2:
+        if st.button("↺ Przywróć domyślne ceny rynkowe", type="secondary", use_container_width=True):
+            st.session_state['platform_prices'] = copy.deepcopy(PLATFORMS)
+            save_data(st.session_state['logged_in_user'], {
+                "poczekalnia": st.session_state['waiting_room'],
+                "historia_wydatkow": st.session_state['history'],
+                "target_budget": st.session_state['target_budget'],
+                "current_spend": st.session_state['current_spend']
+            })
+            st.session_state['toast_msg'] = ("Przywrócono domyślne ceny rynkowe", "↺")
+            st.rerun()
 
     st.write("---")
     st.header("🗑️ Strefa niebezpieczna")
