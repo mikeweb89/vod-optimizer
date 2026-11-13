@@ -1,0 +1,31 @@
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    # Uruchamia się automatycznie co 3 dni o godzinie 08:00 UTC
+    - cron: '0 8 */3 * *'
+  workflow_dispatch: # Pozwala również na ręczne uruchomienie z zakładki Actions na GitHubie
+
+jobs:
+  ping-supabase:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Pobierz kod repozytorium
+        uses: actions/checkout@v4
+
+      - name: Skonfiguruj środowisko Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Zainstaluj bibliotekę Supabase
+        run: |
+          python -m pip install --upgrade pip
+          pip install supabase
+
+      - name: Wykonaj ping do bazy Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/supabase_keepalive.py
