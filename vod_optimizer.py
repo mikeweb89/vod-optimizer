@@ -139,7 +139,7 @@ body:has([data-testid="stVegaLiteChart"]:hover) #vg-tooltip-element.visible {
 
 /* Wyśrodkowanie i optymalna szerokość na dużych monitorach */
 .block-container {
-    max-width: 1460px !important;
+    max-width: 1560px !important;
     padding-top: 1.1rem !important;
     padding-bottom: 3rem !important;
     margin: 0 auto !important;
@@ -314,8 +314,12 @@ div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stMetric"] {
     height: 92px !important;
     min-height: 92px !important;
 }
-div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stMetricValue"] {
-    font-size: 1.35rem !important;
+div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stMetricValue"],
+div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stMetricValue"] * {
+    font-size: 1.38rem !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+    white-space: nowrap !important;
 }
 
 /* Delikatne podświetlenie kart (kontenerów) po najechaniu */
@@ -1093,7 +1097,7 @@ with kpi3:
 st.write("")
 
 if st.session_state["active_nav"] == "planer":
-    col1, col2 = st.columns([1.05, 0.95], gap="large")
+    col1, col2 = st.columns([1.0, 1.0], gap="large")
 
     with col1:
         st.subheader("1. Co chcesz obejrzeć?")
